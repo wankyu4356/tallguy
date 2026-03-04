@@ -73,11 +73,11 @@ function parseSearchPage(html: string): SearchArticle[] {
     containers = $(".group_news .bx");
   }
 
-  logger.debug(`HTML 파싱: ${containers.length}개 컨테이너 발견 (전체 HTML 길이: ${html.length})`);
+  logger.info(`HTML 파싱: ${containers.length}개 컨테이너 발견 (HTML 길이: ${html.length})`);
 
   if (containers.length === 0) {
     logger.warn("뉴스 컨테이너를 찾을 수 없습니다. 네이버 HTML 구조가 변경되었을 수 있습니다.");
-    logger.debug(`HTML 미리보기 (처음 2000자):\n${html.slice(0, 2000)}`);
+    logger.info(`HTML 미리보기 (처음 500자): ${html.slice(0, 500).replace(/\n/g, ' ')}`);
     return [];
   }
 
@@ -139,7 +139,7 @@ async function searchViaScraping(keyword: string, days: number): Promise<SearchA
 
   while (page <= maxPages) {
     const url = buildSearchUrl(keyword, startDate, endDate, page);
-    logger.debug(`페이지 ${page} 요청: ${url}`);
+    logger.info(`페이지 ${page} 요청 중...`);
 
     try {
       const response = await axios.get(url, {
@@ -151,10 +151,10 @@ async function searchViaScraping(keyword: string, days: number): Promise<SearchA
         timeout: 15000,
       });
 
-      logger.debug(`페이지 ${page} HTTP 응답 상태: ${response.status}`);
+      logger.info(`페이지 ${page} HTTP ${response.status}`);
 
       const articles = parseSearchPage(response.data);
-      logger.debug(`페이지 ${page} 파싱 결과: ${articles.length}건`);
+      logger.info(`페이지 ${page} 파싱 결과: ${articles.length}건`);
 
       if (articles.length === 0) {
         logger.info(`페이지 ${page}에서 기사를 찾지 못했습니다. 검색 종료.`);
@@ -172,7 +172,7 @@ async function searchViaScraping(keyword: string, days: number): Promise<SearchA
         }
       }
 
-      logger.debug(`페이지 ${page}: 신규 ${newCount}건, 누적 ${allArticles.length}건`);
+      logger.info(`페이지 ${page}: 신규 ${newCount}건, 누적 ${allArticles.length}건`);
 
       if (newCount === 0) {
         logger.info("신규 기사가 없습니다. 검색 종료.");
@@ -300,7 +300,7 @@ async function searchViaNaverApi(keyword: string, days: number): Promise<SearchA
         newCount++;
       }
 
-      logger.debug(`API 검색 중: ${allArticles.length}건 수집 (전체 ${total}건)`);
+      logger.info(`API 검색 중: ${allArticles.length}건 수집 (전체 ${total}건)`);
 
       if (hasOldArticle || newCount === 0) break;
 

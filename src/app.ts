@@ -482,7 +482,7 @@ function buildPageHtml(): string {
           <label>검색 방법</label>
           <div style="display:flex;gap:16px;margin-top:4px;">
             <label style="display:flex;align-items:center;gap:6px;font-weight:400;cursor:pointer;">
-              <input type="radio" name="method" value="auto" checked style="accent-color:#03c75a;" /> 자동 (스크래핑→API 폴백)
+              <input type="radio" name="method" value="auto" checked style="accent-color:#03c75a;" /> 자동 (API 우선→스크래핑 폴백)
             </label>
             <label style="display:flex;align-items:center;gap:6px;font-weight:400;cursor:pointer;">
               <input type="radio" name="method" value="api" style="accent-color:#03c75a;" /> 네이버 API
@@ -494,6 +494,7 @@ function buildPageHtml(): string {
         </div>
         <button type="submit" class="btn btn-primary" id="searchBtn">검색 시작</button>
       </form>
+      <div class="log-area" id="searchLogArea" style="display:none;margin-top:20px;"></div>
     </div>
 
     <!-- Section 2: Results -->
@@ -590,6 +591,32 @@ function buildPageHtml(): string {
     // -----------------------------------------------------------------------
     // Section 1: Search
     // -----------------------------------------------------------------------
+    function renderSearchLogs(logs) {
+      var area = document.getElementById('searchLogArea');
+      area.innerHTML = '';
+      if (!logs || logs.length === 0) { area.style.display = 'none'; return; }
+      area.style.display = 'block';
+
+      logs.forEach(function(log) {
+        var levelClass = 'log-info';
+        if (log.level === 'warn') levelClass = 'log-warn';
+        if (log.level === 'error') levelClass = 'log-error';
+        if (log.level === 'debug') levelClass = 'log-info';
+
+        var time = '';
+        try { time = new Date(log.timestamp).toLocaleTimeString('ko-KR'); } catch(e) {}
+
+        var line = document.createElement('div');
+        var text = escapeHtml(log.message);
+        if (log.details) { text += '\\n  → ' + escapeHtml(log.details.substring(0, 300)); }
+        line.innerHTML =
+          '<span class="log-time">[' + escapeHtml(time) + ']</span> ' +
+          '<span class="' + levelClass + '">' + text + '</span>';
+        area.appendChild(line);
+      });
+      area.scrollTop = area.scrollHeight;
+    }
+
     document.getElementById('searchForm').addEventListener('submit', async function(e) {
       e.preventDefault();
       var keyword = document.getElementById('keyword').value.trim();
@@ -602,6 +629,7 @@ function buildPageHtml(): string {
       var btn = document.getElementById('searchBtn');
       btn.disabled = true;
       btn.innerHTML = '<span class="spinner"></span>검색 중...';
+      document.getElementById('searchLogArea').style.display = 'none';
 
       try {
         var res = await fetch('/api/search', {
@@ -610,18 +638,24 @@ function buildPageHtml(): string {
           body: JSON.stringify({ keyword: keyword, days: days, method: method })
         });
         var data = await res.json();
-        if (!res.ok) { throw new Error(data.error || '검색 실패'); }
+
+        if (!res.ok) {
+          renderSearchLogs(data.logs);
+          throw new Error(data.error || '검색 실패');
+        }
 
         currentSessionId = data.sessionId;
         currentArticles = data.articles;
 
         if (data.count === 0) {
           showError('검색 결과가 없습니다. 키워드나 기간을 변경해보세요.');
+          renderSearchLogs(data.logs);
           btn.disabled = false;
           btn.textContent = '검색 시작';
           return;
         }
 
+        renderSearchLogs(null);
         renderArticleTable(data.articles, keyword);
         showSection('sectionResults');
       } catch (err) {
@@ -939,6 +973,17 @@ export function createApp(claudeModel: string): { app: express.Express } {
   // POST /api/search
   // -------------------------------------------------------------------------
   app.post("/api/search", async (req, res) => {
+    // 검색 중 발생하는 로그를 캡처
+    const searchLogs: Array<{ level: string; message: string; timestamp: string; details?: string }> = [];
+    const unsubscribe = logger.subscribe((entry) => {
+      searchLogs.push({
+        level: entry.level,
+        message: entry.message,
+        timestamp: entry.timestamp,
+        ...(entry.details && { details: entry.details }),
+      });
+    });
+
     try {
       const { keyword, days, method } = req.body as {
         keyword: unknown;
@@ -947,6 +992,7 @@ export function createApp(claudeModel: string): { app: express.Express } {
       };
 
       if (!keyword || typeof keyword !== "string" || keyword.trim().length === 0) {
+        unsubscribe();
         res.status(400).json({ error: "키워드를 입력해주세요." });
         return;
       }
@@ -977,16 +1023,20 @@ export function createApp(claudeModel: string): { app: express.Express } {
         `검색 완료: "${keyword}" — ${articles.length}건 (세션: ${sessionId})`,
       );
 
+      unsubscribe();
+
       res.json({
         sessionId,
         articles,
         count: articles.length,
+        logs: searchLogs,
       });
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "검색 중 오류가 발생했습니다.";
       logger.error("검색 API 오류", err);
-      res.status(500).json({ error: message });
+      unsubscribe();
+      res.status(500).json({ error: message, logs: searchLogs });
     }
   });
 
