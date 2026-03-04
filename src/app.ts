@@ -794,7 +794,8 @@ function buildPageHtml(): string {
       var start = new Date();
       start.setDate(start.getDate() - days);
       var fmt = function(d) {
-        return d.getFullYear() + '.' + String(d.getMonth()+1).padStart(2,'0') + '.' + String(d.getDate()).padStart(2,'0');
+        return d.getFullYear() + '.' + String(d.getMonth()+1).padStart(2,'0') + '.' + String(d.getDate()).padStart(2,'0')
+          + ' ' + String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
       };
       hint.textContent = fmt(start) + ' ~ ' + fmt(end) + ' (' + days + '일간)';
     }
