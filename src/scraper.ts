@@ -84,6 +84,7 @@ export async function scrapeNaverNews(keyword: string, days: number): Promise<Se
   const allArticles: SearchArticle[] = [];
   const seenLinks = new Set<string>();
   let page = 1;
+  let consecutiveErrors = 0;
   const maxPages = 100;
 
   console.log(`\n🔍 네이버 뉴스 검색: "${keyword}" (최근 ${days}일)`);
@@ -108,6 +109,7 @@ export async function scrapeNaverNews(keyword: string, days: number): Promise<Se
         break;
       }
 
+      consecutiveErrors = 0;
       let newCount = 0;
       for (const article of articles) {
         const key = article.naverLink || article.originalLink;
@@ -127,12 +129,51 @@ export async function scrapeNaverNews(keyword: string, days: number): Promise<Se
       page++;
       await sleep(DELAY_MS);
     } catch (error) {
-      if (axios.isAxiosError(error)) {
-        console.error(`\n   ⚠️  페이지 ${page} 요청 실패: ${error.message}`);
-      } else {
-        console.error(`\n   ⚠️  페이지 ${page} 파싱 오류:`, error);
+      const errMsg = error instanceof Error ? error.message : String(error);
+      console.error(`\n   ⚠️  페이지 ${page} 요청 실패: ${errMsg}`);
+
+      // Issue 12: 1회 재시도
+      try {
+        await sleep(1000);
+        const retryResponse = await axios.get(url, {
+          headers: {
+            "User-Agent": USER_AGENT,
+            "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+            Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          },
+          timeout: 15000,
+        });
+
+        const retryArticles = parseSearchPage(retryResponse.data);
+        if (retryArticles.length === 0) {
+          page++;
+          consecutiveErrors++;
+          if (consecutiveErrors >= 3) break; // 연속 3회 빈 결과 시 종료
+          continue;
+        }
+
+        consecutiveErrors = 0;
+        let newCount = 0;
+        for (const article of retryArticles) {
+          const key = article.naverLink || article.originalLink;
+          if (!seenLinks.has(key)) {
+            seenLinks.add(key);
+            allArticles.push(article);
+            newCount++;
+          }
+        }
+
+        process.stdout.write(`\r   페이지 ${page} 재시도 성공 (신규 ${newCount}건, 누적 ${allArticles.length}건)`);
+        page++;
+        await sleep(DELAY_MS);
+        continue;
+      } catch {
+        console.error(`   재시도도 실패. 다음 페이지로 진행합니다.`);
+        page++;
+        consecutiveErrors++;
+        if (consecutiveErrors >= 3) break;
+        continue;
       }
-      break;
     }
   }
 

@@ -2,6 +2,8 @@ import express from "express";
 import open from "open";
 import type { SearchArticle } from "./types.js";
 
+const TIMEOUT_MS = 30 * 60 * 1000; // 30분
+
 function escapeHtml(str: string): string {
   return str
     .replace(/&/g, "&amp;")
@@ -198,24 +200,60 @@ export function startSelectionServer(
   keyword: string,
   port: number,
 ): Promise<number[]> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const app = express();
     app.use(express.json());
+
+    let resolved = false; // Issue 3: 중복 제출 방지
 
     app.get("/", (_req, res) => {
       res.type("html").send(buildHtml(articles, keyword));
     });
 
     app.post("/api/select", (req, res) => {
-      const { selected } = req.body as { selected: number[] };
-      res.json({ ok: true });
+      // Issue 3: 이미 처리된 경우 무시
+      if (resolved) {
+        res.status(409).json({ error: "이미 선택이 완료되었습니다." });
+        return;
+      }
 
-      // 서버 종료를 약간 지연시켜 응답이 먼저 전송되게 함
+      const { selected } = req.body as { selected: unknown };
+
+      // Issue 5: 입력 검증
+      if (!Array.isArray(selected)) {
+        res.status(400).json({ error: "잘못된 요청입니다." });
+        return;
+      }
+
+      const validIndices = selected.filter(
+        (i): i is number =>
+          typeof i === "number" && Number.isInteger(i) && i >= 0 && i < articles.length,
+      );
+
+      if (validIndices.length === 0) {
+        res.status(400).json({ error: "유효한 기사가 선택되지 않았습니다." });
+        return;
+      }
+
+      resolved = true;
+      res.json({ ok: true, count: validIndices.length });
+
       setTimeout(() => {
+        clearTimeout(timeout);
         server.close();
-        resolve(selected);
+        resolve(validIndices);
       }, 300);
     });
+
+    // Issue 2: 타임아웃 (30분)
+    const timeout = setTimeout(() => {
+      if (!resolved) {
+        console.log("\n   ⏰ 선택 대기 시간이 초과되었습니다 (30분).");
+        console.log("   프로그램을 종료합니다. 다시 실행해주세요.\n");
+        server.close();
+        reject(new Error("기사 선택 타임아웃 (30분 초과)"));
+      }
+    }, TIMEOUT_MS);
 
     const server = app.listen(port, () => {
       const url = `http://localhost:${port}`;
@@ -224,6 +262,19 @@ export function startSelectionServer(
       open(url).catch(() => {
         console.log("   ⚠️  브라우저를 자동으로 열 수 없습니다. 위 URL을 직접 열어주세요.");
       });
+    });
+
+    // Issue 1: 포트 충돌 처리
+    server.on("error", (err: NodeJS.ErrnoException) => {
+      if (err.code === "EADDRINUSE") {
+        const nextPort = port + 1;
+        console.log(`   ⚠️  포트 ${port}이 사용 중입니다. 포트 ${nextPort}으로 재시도합니다.`);
+        clearTimeout(timeout);
+        resolve(startSelectionServer(articles, keyword, nextPort));
+      } else {
+        clearTimeout(timeout);
+        reject(err);
+      }
     });
   });
 }

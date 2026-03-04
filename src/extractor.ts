@@ -1,14 +1,17 @@
 import Anthropic from "@anthropic-ai/sdk";
 import * as cheerio from "cheerio";
+import type { CheerioAPI } from "cheerio";
 import { fetchArticleHtml } from "./scraper.js";
 import type { ArticleDetail, SearchArticle } from "./types.js";
 
-function extractTextFromHtml(html: string): string {
+// Issue 13: cheerio를 한 번만 파싱하여 재사용
+function parseHtml(html: string): CheerioAPI {
   const $ = cheerio.load(html);
-
-  // 불필요한 요소 제거
   $("script, style, nav, header, footer, iframe, .ad, .advertisement, #comment, .comment").remove();
+  return $;
+}
 
+function extractTextFromParsed($: CheerioAPI): string {
   // 네이버 뉴스 본문 우선 추출 시도
   const naverArticle = $("#dic_area, #newsct_article, #articeBody, #articleBodyContents").first();
   if (naverArticle.length > 0) {
@@ -25,21 +28,17 @@ function extractTextFromHtml(html: string): string {
   return $("body").text().replace(/\s+/g, " ").trim();
 }
 
-function extractMetaFromHtml(html: string): { title?: string; date?: string; press?: string } {
-  const $ = cheerio.load(html);
+function extractMetaFromParsed($: CheerioAPI): { title?: string; date?: string; press?: string } {
   const meta: { title?: string; date?: string; press?: string } = {};
 
-  // 제목
   meta.title =
     $(".media_end_head_headline, #title_area, .article_header h1, h1.headline").first().text().trim() ||
     $('meta[property="og:title"]').attr("content") ||
     $("title").text().trim();
 
-  // 날짜
   const dateEl = $(".media_end_head_info_datestamp_time, .article_info .date, time, .author em");
   meta.date = dateEl.attr("data-date-time") || dateEl.first().text().trim();
 
-  // 언론사
   meta.press =
     $(".media_end_head_top_logo img").attr("alt") ||
     $('meta[property="og:article:author"]').attr("content") ||
@@ -86,8 +85,10 @@ export async function extractArticleDetail(
     }
   }
 
-  const textContent = extractTextFromHtml(html);
-  const meta = extractMetaFromHtml(html);
+  // Issue 13: 한 번만 파싱
+  const $ = parseHtml(html);
+  const textContent = extractTextFromParsed($);
+  const meta = extractMetaFromParsed($);
 
   // 텍스트가 너무 짧으면 메타데이터 기반으로 반환
   if (textContent.length < 50) {
@@ -101,12 +102,14 @@ export async function extractArticleDetail(
     };
   }
 
-  // Claude를 통해 기사 내용 정확히 추출 (누락 없이)
-  const truncatedText = textContent.slice(0, 15000);
+  // Issue 7: 본문 잘림 한도 30000자로 증가
+  const truncatedText = textContent.slice(0, 30000);
 
+  // Claude를 통해 기사 내용 정확히 추출 (누락 없이)
   const response = await claude.messages.create({
     model,
-    max_tokens: 4096,
+    // Issue 6: max_tokens 8192로 증가
+    max_tokens: 8192,
     messages: [
       {
         role: "user",

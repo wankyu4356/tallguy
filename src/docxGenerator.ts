@@ -7,7 +7,6 @@ import {
   AlignmentType,
   BorderStyle,
   ExternalHyperlink,
-  TableOfContents,
   PageBreak,
 } from "docx";
 import fs from "fs";
