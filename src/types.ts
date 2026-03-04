@@ -4,6 +4,8 @@ export interface ClipperConfig {
   outputPath: string;
   claudeModel: string;
   port: number;
+  naverClientId: string;
+  naverClientSecret: string;
 }
 
 export interface SearchArticle {

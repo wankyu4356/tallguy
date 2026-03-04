@@ -30,7 +30,12 @@ async function main() {
   const claude = new Anthropic();
 
   // 3. 네이버 뉴스 검색
-  const allArticles = await scrapeNaverNews(config.keyword, config.days);
+  const allArticles = await scrapeNaverNews(
+    config.keyword,
+    config.days,
+    config.naverClientId,
+    config.naverClientSecret,
+  );
 
   if (allArticles.length === 0) {
     console.log("❌ 검색 결과가 없습니다. 키워드나 기간을 조정해보세요.");

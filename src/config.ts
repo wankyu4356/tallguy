@@ -19,7 +19,6 @@ export function parseConfig(): ClipperConfig {
 
   const opts = program.opts();
 
-  // Issue 10: NaN 검증
   const days = parseInt(opts.days, 10);
   if (isNaN(days) || days <= 0) {
     console.error("❌ --days 값은 1 이상의 숫자여야 합니다.");
@@ -42,5 +41,7 @@ export function parseConfig(): ClipperConfig {
     outputPath: opts.output || defaultOutput,
     claudeModel: opts.model,
     port,
+    naverClientId: process.env.NAVER_CLIENT_ID || "",
+    naverClientSecret: process.env.NAVER_CLIENT_SECRET || "",
   };
 }
