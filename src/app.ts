@@ -106,7 +106,10 @@ function sessionProgress(
   totalSteps: number,
   message: string,
 ): void {
-  broadcastSSE(session, { type: "progress", step, totalSteps, message });
+  // 단계별 시작점 퍼센트 계산
+  const stepStartPercents = [0, 60, 80, 90, 100];
+  const overallPercent = stepStartPercents[step - 1] || 0;
+  broadcastSSE(session, { type: "progress", step, totalSteps, message, overallPercent });
   sessionLog(session, "info", message);
 }
 
@@ -694,9 +697,25 @@ function buildPageHtml(): string {
     <div class="section" id="sectionProgress">
       <div class="section-title">분석 진행 중</div>
       <div class="progress-info">
-        <div class="step-label" id="stepLabel"><span class="spinner"></span>준비 중...</div>
+        <!-- 전체 진행률 -->
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">
+          <div class="step-label" id="stepLabel" style="margin-bottom:0;flex:1;"><span class="spinner"></span>준비 중...</div>
+          <div id="progressPercent" style="font-size:24px;font-weight:700;color:#03c75a;min-width:60px;text-align:right;">0%</div>
+        </div>
         <div class="progress-bar-track">
           <div class="progress-bar-fill" id="progressBar"></div>
+        </div>
+        <!-- 세부 진행 상황 -->
+        <div id="detailProgress" style="margin-top:14px;padding:14px 16px;background:#f8f9fa;border-radius:8px;display:none;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+            <span id="detailStepName" style="font-size:14px;font-weight:600;color:#333;"></span>
+            <span id="detailCount" style="font-size:13px;color:#666;"></span>
+          </div>
+          <div style="width:100%;height:8px;background:#e9ecef;border-radius:4px;overflow:hidden;margin-bottom:10px;">
+            <div id="detailBar" style="height:100%;background:#6cb4ee;border-radius:4px;transition:width 0.3s;width:0%;"></div>
+          </div>
+          <div id="detailItem" style="font-size:13px;color:#888;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>
+          <div id="detailEta" style="font-size:12px;color:#aaa;margin-top:4px;"></div>
         </div>
       </div>
       <div class="log-area" id="logArea"></div>
@@ -1022,15 +1041,54 @@ function buildPageHtml(): string {
 
       eventSource = new EventSource('/api/progress/' + sessionId);
 
+      var detailStartTime = null;
+
       eventSource.onmessage = function(e) {
         var data;
         try { data = JSON.parse(e.data); } catch { return; }
 
         if (data.type === 'progress') {
-          var pct = Math.round((data.step / data.totalSteps) * 100);
+          var pct = Math.round(data.overallPercent || (data.step / data.totalSteps) * 100);
           document.getElementById('progressBar').style.width = pct + '%';
+          document.getElementById('progressPercent').textContent = pct + '%';
           document.getElementById('stepLabel').innerHTML =
-            '<span class="spinner"></span>' + escapeHtml(data.step + '/' + data.totalSteps + ' ' + data.message);
+            '<span class="spinner"></span>' + escapeHtml('단계 ' + data.step + '/' + data.totalSteps + ': ' + data.message);
+          // 세부 진행 초기화
+          document.getElementById('detailProgress').style.display = 'none';
+          detailStartTime = null;
+        }
+
+        if (data.type === 'detail_progress') {
+          // 전체 진행률 업데이트
+          var overallPct = Math.round(data.overallPercent || 0);
+          document.getElementById('progressBar').style.width = overallPct + '%';
+          document.getElementById('progressPercent').textContent = overallPct + '%';
+
+          // 세부 진행 패널 표시
+          var dp = document.getElementById('detailProgress');
+          dp.style.display = 'block';
+          document.getElementById('detailStepName').textContent = data.stepName || '';
+          document.getElementById('detailCount').textContent = data.current + ' / ' + data.stepTotal;
+          var subPct = Math.round((data.current / data.stepTotal) * 100);
+          document.getElementById('detailBar').style.width = subPct + '%';
+          document.getElementById('detailItem').textContent = data.itemName || '';
+
+          // ETA 계산
+          if (!detailStartTime) detailStartTime = Date.now();
+          if (data.current > 1) {
+            var elapsed = (Date.now() - detailStartTime) / 1000;
+            var perItem = elapsed / (data.current - 1);
+            var remaining = perItem * (data.stepTotal - data.current);
+            var etaText = '';
+            if (remaining > 60) {
+              etaText = '약 ' + Math.ceil(remaining / 60) + '분 남음';
+            } else if (remaining > 5) {
+              etaText = '약 ' + Math.round(remaining) + '초 남음';
+            } else {
+              etaText = '거의 완료...';
+            }
+            document.getElementById('detailEta').textContent = etaText;
+          }
         }
 
         if (data.type === 'log') {
@@ -1040,7 +1098,9 @@ function buildPageHtml(): string {
         if (data.type === 'done') {
           if (eventSource) { eventSource.close(); eventSource = null; }
           document.getElementById('progressBar').style.width = '100%';
+          document.getElementById('progressPercent').textContent = '100%';
           document.getElementById('stepLabel').textContent = '완료!';
+          document.getElementById('detailProgress').style.display = 'none';
           showComplete(data.filename, data.emailSent);
         }
 
@@ -1049,6 +1109,8 @@ function buildPageHtml(): string {
           appendLog('error', data.message, new Date().toISOString());
           document.getElementById('stepLabel').textContent = '오류 발생';
           document.getElementById('progressBar').style.width = '0%';
+          document.getElementById('progressPercent').textContent = '';
+          document.getElementById('detailProgress').style.display = 'none';
           showError(data.message);
         }
       };
@@ -1566,6 +1628,34 @@ async function runPipeline(
       }
     });
 
+    // 단계별 진행률 가중치 (전체 100% 중)
+    const stepWeights = [60, 20, 10, 10]; // extract, rank, summary, docx
+
+    function broadcastDetailProgress(
+      step: number,
+      stepName: string,
+      current: number,
+      stepTotal: number,
+      itemName: string,
+    ): void {
+      // 해당 단계까지의 누적 가중치 계산
+      let basePct = 0;
+      for (let s = 0; s < step - 1; s++) basePct += stepWeights[s];
+      const stepPct = stepWeights[step - 1] || 10;
+      const overallPercent = Math.round(basePct + (current / stepTotal) * stepPct);
+
+      broadcastSSE(session, {
+        type: "detail_progress",
+        step,
+        totalSteps,
+        stepName,
+        current,
+        stepTotal,
+        itemName,
+        overallPercent,
+      });
+    }
+
     try {
       // Step 1: Extract article bodies
       sessionProgress(
@@ -1578,6 +1668,9 @@ async function runPipeline(
         selectedArticles,
         claude,
         claudeModel,
+        (current, total, itemName) => {
+          broadcastDetailProgress(1, "기사 본문 추출", current, total, itemName);
+        },
       );
 
       // Step 2: Rank by importance
@@ -1591,6 +1684,9 @@ async function runPipeline(
         articleDetails,
         claude,
         claudeModel,
+        (current, total, itemName) => {
+          broadcastDetailProgress(2, "M&A 중요도 분석", current, total, itemName);
+        },
       );
 
       // Step 3: Generate executive summary
@@ -1600,6 +1696,7 @@ async function runPipeline(
         totalSteps,
         "Executive Summary 생성 중...",
       );
+      broadcastDetailProgress(3, "Executive Summary 생성", 1, 1, "AI 분석 중...");
       const executiveSummary = await generateExecutiveSummary(
         rankedArticles,
         keywordStr,
@@ -1609,6 +1706,7 @@ async function runPipeline(
 
       // Step 4: Generate DOCX
       sessionProgress(session, 4, totalSteps, "DOCX 리포트 생성 중...");
+      broadcastDetailProgress(4, "DOCX 파일 생성", 1, 1, "리포트 조립 중...");
 
       const outputDir = ensureOutputDir();
       const dateStr = getDateStr();

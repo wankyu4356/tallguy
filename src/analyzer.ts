@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { ArticleDetail, RankedArticle } from "./types.js";
+import type { ProgressCallback } from "./extractor.js";
 
 const BATCH_SIZE = 30;
 
@@ -7,6 +8,7 @@ export async function rankByImportance(
   articles: ArticleDetail[],
   claude: Anthropic,
   model: string,
+  onProgress?: ProgressCallback,
 ): Promise<RankedArticle[]> {
   console.log("📊 기사 중요도 분석 중...");
 
@@ -25,6 +27,7 @@ export async function rankByImportance(
     if (batches.length > 1) {
       process.stdout.write(`\r   배치 ${batchIdx + 1}/${batches.length} 분석 중...`);
     }
+    onProgress?.(batchIdx + 1, batches.length, `배치 ${batchIdx + 1}/${batches.length} 분석`);
 
     const articleSummaries = batch.map((a, i) => ({
       index: i,

@@ -250,10 +250,13 @@ ${truncatedText}`,
   }
 }
 
+export type ProgressCallback = (current: number, total: number, itemName: string) => void;
+
 export async function extractAllArticles(
   articles: SearchArticle[],
   claude: Anthropic,
   model: string,
+  onProgress?: ProgressCallback,
 ): Promise<ArticleDetail[]> {
   const results: ArticleDetail[] = [];
   const total = articles.length;
@@ -261,14 +264,17 @@ export async function extractAllArticles(
   console.log(`\n📄 기사 본문 추출 중... (${total}건)`);
 
   for (let i = 0; i < total; i++) {
-    process.stdout.write(`\r   [${i + 1}/${total}] ${articles[i].title.slice(0, 40)}...`);
+    const title = articles[i].title;
+    process.stdout.write(`\r   [${i + 1}/${total}] ${title.slice(0, 40)}...`);
+    onProgress?.(i + 1, total, title);
+
     try {
       const detail = await extractArticleDetail(articles[i], claude, model);
       results.push(detail);
     } catch (error) {
-      console.error(`\n   ⚠️  기사 추출 실패: ${articles[i].title}`);
+      console.error(`\n   ⚠️  기사 추출 실패: ${title}`);
       results.push({
-        title: articles[i].title,
+        title,
         publishDate: articles[i].date,
         reporter: "알 수 없음",
         press: articles[i].press,
