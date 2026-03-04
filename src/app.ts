@@ -656,7 +656,8 @@ function buildPageHtml(): string {
         </div>
         <div class="form-group">
           <label for="days">검색 기간 (일)</label>
-          <input type="number" id="days" name="days" value="7" min="1" max="365" />
+          <input type="number" id="days" name="days" value="7" min="1" max="365" oninput="updateDateRange()" />
+          <div class="hint" id="dateRangeHint"></div>
         </div>
         <div class="form-group">
           <label>검색 방법</label>
@@ -784,6 +785,21 @@ function buildPageHtml(): string {
       var after = escapeHtml(text.substring(idx + keyword.length, end)) + (end < text.length ? '...' : '');
       return before + match + after;
     }
+
+    function updateDateRange() {
+      var days = parseInt(document.getElementById('days').value, 10);
+      var hint = document.getElementById('dateRangeHint');
+      if (isNaN(days) || days < 1) { hint.textContent = ''; return; }
+      var end = new Date();
+      var start = new Date();
+      start.setDate(start.getDate() - days);
+      var fmt = function(d) {
+        return d.getFullYear() + '.' + String(d.getMonth()+1).padStart(2,'0') + '.' + String(d.getDate()).padStart(2,'0');
+      };
+      hint.textContent = fmt(start) + ' ~ ' + fmt(end) + ' (' + days + '일간)';
+    }
+    // 페이지 로드 시 초기 표시
+    updateDateRange();
 
     function updateTotalCount() {
       var checked = document.querySelectorAll('.article-cb:checked').length;
