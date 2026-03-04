@@ -24,6 +24,7 @@ import type {
 interface SessionData {
   keywords: string[];
   days: number;
+  analysisPrompt: string;
   articlesByKeyword: Record<string, SearchArticle[]>;
   selectedArticles?: SearchArticle[];
   status: "searched" | "processing" | "done" | "error";
@@ -655,6 +656,13 @@ function buildPageHtml(): string {
           <div class="hint">키워드를 쉼표(,)로 구분하면 각 키워드별로 검색합니다</div>
         </div>
         <div class="form-group">
+          <label for="analysisPrompt">분석 기준</label>
+          <textarea id="analysisPrompt" name="analysisPrompt" rows="3"
+                    placeholder="예: M&A 관점에서 중요도를 분석해줘 / 반도체 산업 투자 기회 관점으로 정리해줘 / ESG 리스크 중심으로 평가해줘"
+                    style="resize:vertical;min-height:60px;"></textarea>
+          <div class="hint">AI가 기사를 분석·정렬할 기준을 자유롭게 입력하세요. 비워두면 일반 뉴스 중요도 순으로 정리합니다.</div>
+        </div>
+        <div class="form-group">
           <label for="days">검색 기간 (일)</label>
           <input type="number" id="days" name="days" value="7" min="1" max="365" oninput="updateDateRange()" />
           <div class="hint" id="dateRangeHint"></div>
@@ -859,6 +867,7 @@ function buildPageHtml(): string {
       var days = parseInt(document.getElementById('days').value, 10);
       var methodEl = document.querySelector('input[name="method"]:checked');
       var method = methodEl ? methodEl.value : 'auto';
+      var analysisPrompt = (document.getElementById('analysisPrompt').value || '').trim();
       if (!keywordsRaw) { showError('키워드를 입력해주세요.'); return; }
       if (isNaN(days) || days < 1) { days = 7; }
 
@@ -874,7 +883,7 @@ function buildPageHtml(): string {
         var res = await fetch('/api/search', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ keywords: keywordsRaw, days: days, method: method, sendEmail: sendEmail })
+          body: JSON.stringify({ keywords: keywordsRaw, days: days, method: method, sendEmail: sendEmail, analysisPrompt: analysisPrompt })
         });
         var data = await res.json();
 
@@ -1371,11 +1380,12 @@ export function createApp(claudeModel: string): { app: express.Express } {
     });
 
     try {
-      const { keywords: keywordsRaw, days, method, sendEmail } = req.body as {
+      const { keywords: keywordsRaw, days, method, sendEmail, analysisPrompt: rawPrompt } = req.body as {
         keywords: unknown;
         days: unknown;
         method: unknown;
         sendEmail: unknown;
+        analysisPrompt: unknown;
       };
 
       if (!keywordsRaw || typeof keywordsRaw !== "string" || keywordsRaw.trim().length === 0) {
@@ -1416,10 +1426,13 @@ export function createApp(claudeModel: string): { app: express.Express } {
         logger.info(`키워드 "${kw}" 검색 완료: ${articles.length}건`);
       }
 
+      const analysisPrompt = typeof rawPrompt === "string" ? rawPrompt.trim() : "";
+
       const sessionId = crypto.randomUUID();
       const session: SessionData = {
         keywords,
         days: parsedDays,
+        analysisPrompt,
         articlesByKeyword,
         status: "searched",
         sseClients: new Set(),
@@ -1691,18 +1704,20 @@ async function runPipeline(
       );
 
       // Step 2: Rank by importance
+      const analysisLabel = session.analysisPrompt ? "기사 분석·정렬" : "중요도 분석";
       sessionProgress(
         session,
         2,
         totalSteps,
-        "M&A 중요도 분석 중...",
+        `${analysisLabel} 중...`,
       );
       const rankedArticles = await rankByImportance(
         articleDetails,
         claude,
         claudeModel,
+        session.analysisPrompt,
         (current, total, itemName) => {
-          broadcastDetailProgress(2, "M&A 중요도 분석", current, total, itemName);
+          broadcastDetailProgress(2, analysisLabel, current, total, itemName);
         },
       );
 
@@ -1719,6 +1734,7 @@ async function runPipeline(
         keywordStr,
         claude,
         claudeModel,
+        session.analysisPrompt,
       );
 
       // Step 4: Generate DOCX

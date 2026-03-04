@@ -8,6 +8,7 @@ export async function rankByImportance(
   articles: ArticleDetail[],
   claude: Anthropic,
   model: string,
+  analysisPrompt?: string,
   onProgress?: ProgressCallback,
 ): Promise<RankedArticle[]> {
   console.log("📊 기사 중요도 분석 중...");
@@ -39,21 +40,34 @@ export async function rankByImportance(
 
     // Issue 4: Claude API 에러 핸들링
     try {
+      let systemInstruction: string;
+      if (analysisPrompt) {
+        systemInstruction = `당신은 뉴스 분석 전문가입니다. 아래 뉴스 기사 목록을 사용자가 제시한 분석 기준에 따라 중요도 순으로 랭킹해주세요.
+
+사용자 분석 기준:
+"${analysisPrompt}"
+
+위 기준에 가장 부합하는 기사일수록 높은 중요도(낮은 숫자)를 부여하세요.
+각 기사의 중요도를 1(가장 중요)부터 매겨주세요. 동일 중요도 가능합니다.`;
+      } else {
+        systemInstruction = `당신은 뉴스 분석 전문가입니다. 아래 뉴스 기사 목록을 뉴스 중요도 순으로 랭킹해주세요.
+
+중요도 기준:
+1. 사회적 파급력이 큰 뉴스 → 가장 높음
+2. 산업·경제에 영향을 미치는 주요 이벤트
+3. 기업 관련 중요 뉴스
+4. 일반 뉴스 → 가장 낮음
+
+각 기사의 중요도를 1(가장 중요)부터 매겨주세요. 동일 중요도 가능합니다.`;
+      }
+
       const response = await claude.messages.create({
         model,
         max_tokens: 4096,
         messages: [
           {
             role: "user",
-            content: `당신은 M&A(인수합병) 전문 애널리스트입니다. 아래 뉴스 기사 목록을 M&A 관점에서 중요도 순으로 랭킹해주세요.
-
-중요도 기준:
-1. M&A 직접 관련 (인수, 합병, 매각, 지분 투자 등) → 가장 높음
-2. 기업 가치평가, 자금조달, IPO 등 M&A에 영향을 미치는 이벤트
-3. 산업 재편, 규제 변화 등 M&A 환경에 영향을 미치는 뉴스
-4. 일반 기업/경제 뉴스 → 가장 낮음
-
-각 기사의 중요도를 1(가장 중요)부터 매겨주세요. 동일 중요도 가능합니다.
+            content: `${systemInstruction}
 
 반드시 아래 JSON 형식으로만 응답하세요:
 [
@@ -116,6 +130,7 @@ export async function generateExecutiveSummary(
   keyword: string,
   claude: Anthropic,
   model: string,
+  analysisPrompt?: string,
 ): Promise<string[]> {
   console.log("📝 Executive Summary 생성 중...");
 
@@ -136,11 +151,11 @@ export async function generateExecutiveSummary(
       messages: [
         {
           role: "user",
-          content: `당신은 M&A 전문 애널리스트입니다. 아래 뉴스 기사들을 종합하여 Executive Summary를 작성해주세요.
+          content: `당신은 뉴스 분석 전문가입니다. 아래 뉴스 기사들을 종합하여 Executive Summary를 작성해주세요.
 
 요구사항:
 - "${keyword}" 관련 주요 동향을 10줄 내외의 bullet point로 정리
-- M&A 관점에서 가장 중요한 이슈부터 나열
+- ${analysisPrompt ? `사용자 분석 관점: "${analysisPrompt}" — 이 관점에서 가장 중요한 이슈부터 나열` : "가장 중요한 이슈부터 나열"}
 - 각 bullet은 핵심 내용을 간결하게 담을 것
 - 한국어로 작성
 
