@@ -8,6 +8,7 @@ import { extractAllArticles } from "./extractor.js";
 import { rankByImportance, generateExecutiveSummary } from "./analyzer.js";
 import { generateDocx } from "./docxGenerator.js";
 import { logger } from "./logger.js";
+import { isSetupComplete } from "./config.js";
 import type {
   SearchArticle,
   RankedArticle,
@@ -435,8 +436,37 @@ function buildPageHtml(): string {
     <!-- Global Error -->
     <div class="error-box" id="globalError"></div>
 
+    <!-- Section 0: Setup -->
+    <div class="section" id="sectionSetup">
+      <div class="section-title">⚙️ 초기 설정</div>
+      <p style="color:#666;margin-bottom:20px;">서비스를 사용하려면 API 키를 입력하세요. 설정은 .env 파일에 저장됩니다.</p>
+      <form id="setupForm">
+        <div class="form-group">
+          <label for="setupAnthropicKey">Anthropic API Key (필수)</label>
+          <input type="text" id="setupAnthropicKey" placeholder="sk-ant-..." required
+                 style="max-width:500px;font-family:monospace;" />
+        </div>
+        <div class="form-group">
+          <label for="setupClaudeModel">Claude 모델</label>
+          <input type="text" id="setupClaudeModel" value="" placeholder="claude-sonnet-4-20250514"
+                 style="max-width:400px;font-family:monospace;" />
+        </div>
+        <div class="form-group">
+          <label for="setupNaverId">네이버 Client ID (선택)</label>
+          <input type="text" id="setupNaverId" placeholder=""
+                 style="max-width:400px;font-family:monospace;" />
+        </div>
+        <div class="form-group">
+          <label for="setupNaverSecret">네이버 Client Secret (선택)</label>
+          <input type="text" id="setupNaverSecret" placeholder=""
+                 style="max-width:400px;font-family:monospace;" />
+        </div>
+        <button type="submit" class="btn btn-primary" id="setupBtn">저장 및 시작</button>
+      </form>
+    </div>
+
     <!-- Section 1: Search -->
-    <div class="section active" id="sectionSearch">
+    <div class="section" id="sectionSearch">
       <div class="section-title">검색 설정</div>
       <form id="searchForm">
         <div class="form-group">
@@ -768,6 +798,65 @@ function buildPageHtml(): string {
       document.getElementById('processBtn').textContent = '선택 완료 및 분석 시작';
       showSection('sectionSearch');
     }
+
+    // -----------------------------------------------------------------------
+    // Section 0: Setup
+    // -----------------------------------------------------------------------
+    document.getElementById('setupForm').addEventListener('submit', async function(e) {
+      e.preventDefault();
+      var btn = document.getElementById('setupBtn');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span>저장 중...';
+
+      var settings = {
+        ANTHROPIC_API_KEY: document.getElementById('setupAnthropicKey').value.trim(),
+        CLAUDE_MODEL: document.getElementById('setupClaudeModel').value.trim(),
+        NAVER_CLIENT_ID: document.getElementById('setupNaverId').value.trim(),
+        NAVER_CLIENT_SECRET: document.getElementById('setupNaverSecret').value.trim(),
+      };
+
+      if (!settings.ANTHROPIC_API_KEY) {
+        showError('Anthropic API Key를 입력하세요.');
+        btn.disabled = false;
+        btn.textContent = '저장 및 시작';
+        return;
+      }
+
+      try {
+        var res = await fetch('/api/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(settings)
+        });
+        var data = await res.json();
+        if (!res.ok) throw new Error(data.error || '저장 실패');
+
+        showSection('sectionSearch');
+      } catch (err) {
+        showError(err.message);
+        btn.disabled = false;
+        btn.textContent = '저장 및 시작';
+      }
+    });
+
+    // Auto-detect: show setup or search on page load
+    (async function() {
+      try {
+        var res = await fetch('/api/settings');
+        var data = await res.json();
+        if (data.needsSetup) {
+          // Pre-fill existing values
+          if (data.current.CLAUDE_MODEL) document.getElementById('setupClaudeModel').value = data.current.CLAUDE_MODEL;
+          if (data.current.NAVER_CLIENT_ID) document.getElementById('setupNaverId').value = data.current.NAVER_CLIENT_ID;
+          if (data.current.NAVER_CLIENT_SECRET) document.getElementById('setupNaverSecret').value = data.current.NAVER_CLIENT_SECRET;
+          showSection('sectionSetup');
+        } else {
+          showSection('sectionSearch');
+        }
+      } catch (e) {
+        showSection('sectionSearch');
+      }
+    })();
   </script>
 </body>
 </html>`;
@@ -779,7 +868,18 @@ function buildPageHtml(): string {
 
 export function createApp(claudeModel: string): { app: express.Express } {
   const app = express();
-  const claude = new Anthropic();
+
+  // Lazy init — API 키가 설정 후에야 사용 가능
+  let claude: Anthropic | null = null;
+  function getClaude(): Anthropic {
+    if (!claude || !process.env.ANTHROPIC_API_KEY) {
+      if (!process.env.ANTHROPIC_API_KEY) {
+        throw new Error("ANTHROPIC_API_KEY가 설정되지 않았습니다. 초기 설정을 완료하세요.");
+      }
+      claude = new Anthropic();
+    }
+    return claude;
+  }
 
   app.use(express.json({ limit: "5mb" }));
 
@@ -788,6 +888,51 @@ export function createApp(claudeModel: string): { app: express.Express } {
   // -------------------------------------------------------------------------
   app.get("/", (_req, res) => {
     res.type("html").send(buildPageHtml());
+  });
+
+  // -------------------------------------------------------------------------
+  // GET /api/settings — 현재 설정 상태 확인
+  // -------------------------------------------------------------------------
+  app.get("/api/settings", (_req, res) => {
+    res.json({
+      needsSetup: !isSetupComplete(),
+      current: {
+        CLAUDE_MODEL: process.env.CLAUDE_MODEL || "",
+        NAVER_CLIENT_ID: process.env.NAVER_CLIENT_ID || "",
+        NAVER_CLIENT_SECRET: process.env.NAVER_CLIENT_SECRET || "",
+      },
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // POST /api/settings — .env 저장 및 환경변수 반영
+  // -------------------------------------------------------------------------
+  app.post("/api/settings", (req, res) => {
+    try {
+      const body = req.body as Record<string, string>;
+      const envPath = path.resolve(".env");
+
+      const lines: string[] = [];
+      if (body.ANTHROPIC_API_KEY) lines.push(`ANTHROPIC_API_KEY=${body.ANTHROPIC_API_KEY}`);
+      if (body.CLAUDE_MODEL) lines.push(`CLAUDE_MODEL=${body.CLAUDE_MODEL}`);
+      if (body.NAVER_CLIENT_ID) lines.push(`NAVER_CLIENT_ID=${body.NAVER_CLIENT_ID}`);
+      if (body.NAVER_CLIENT_SECRET) lines.push(`NAVER_CLIENT_SECRET=${body.NAVER_CLIENT_SECRET}`);
+
+      fs.writeFileSync(envPath, lines.join("\n") + "\n", "utf-8");
+
+      // 환경변수 즉시 반영
+      if (body.ANTHROPIC_API_KEY) process.env.ANTHROPIC_API_KEY = body.ANTHROPIC_API_KEY;
+      if (body.CLAUDE_MODEL) process.env.CLAUDE_MODEL = body.CLAUDE_MODEL;
+      if (body.NAVER_CLIENT_ID) process.env.NAVER_CLIENT_ID = body.NAVER_CLIENT_ID;
+      if (body.NAVER_CLIENT_SECRET) process.env.NAVER_CLIENT_SECRET = body.NAVER_CLIENT_SECRET;
+
+      logger.info("설정이 저장되었습니다.");
+      res.json({ ok: true });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "설정 저장 실패";
+      logger.error("설정 저장 오류: " + msg, err);
+      res.status(500).json({ error: msg });
+    }
   });
 
   // -------------------------------------------------------------------------
@@ -892,7 +1037,7 @@ export function createApp(claudeModel: string): { app: express.Express } {
       res.json({ ok: true });
 
       // Run pipeline in background
-      runPipeline(session, sessionId, claude, claudeModel).catch((err) => {
+      runPipeline(session, sessionId, getClaude(), claudeModel).catch((err) => {
         logger.error("파이프라인 실행 오류", err);
       });
     } catch (err) {

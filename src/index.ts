@@ -1,18 +1,23 @@
 import { getConfig } from "./config.js";
 import { createApp } from "./app.js";
 import { logger } from "./logger.js";
+import open from "open";
 
 const config = getConfig();
 const { app } = createApp(config.claudeModel);
 
 const server = app.listen(config.port, () => {
+  const url = `http://localhost:${config.port}`;
   console.log("━".repeat(60));
   console.log("  📰 네이버 뉴스 클리퍼 (Web GUI)");
   console.log("━".repeat(60));
-  console.log(`\n  🌐 http://localhost:${config.port}`);
-  console.log(`  📊 모델: ${config.claudeModel}`);
-  console.log(`\n  브라우저에서 위 주소를 열어주세요.\n`);
-  logger.info(`웹 서버 시작: http://localhost:${config.port}`);
+  console.log(`\n  🌐 ${url}`);
+  console.log(`\n  브라우저를 자동으로 엽니다...\n`);
+  logger.info(`웹 서버 시작: ${url}`);
+
+  open(url).catch(() => {
+    console.log("  ⚠️  브라우저를 자동으로 열 수 없습니다. 위 URL을 직접 열어주세요.");
+  });
 });
 
 server.on("error", (err: NodeJS.ErrnoException) => {
