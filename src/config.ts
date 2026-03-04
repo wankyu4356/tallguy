@@ -4,7 +4,7 @@ dotenv.config();
 
 export function getConfig() {
   const port = parseInt(process.env.PORT || "3000", 10);
-  const claudeModel = process.env.CLAUDE_MODEL || "claude-sonnet-4-20250514";
+  const claudeModel = process.env.CLAUDE_MODEL || "claude-opus-4-6";
 
   return { port, claudeModel };
 }
