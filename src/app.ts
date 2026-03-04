@@ -3,6 +3,7 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import Anthropic from "@anthropic-ai/sdk";
+import nodemailer from "nodemailer";
 import { scrapeNaverNews, type SearchMethod } from "./scraper.js";
 import { extractAllArticles } from "./extractor.js";
 import { rankByImportance, generateExecutiveSummary } from "./analyzer.js";
@@ -21,14 +22,15 @@ import type {
 // ---------------------------------------------------------------------------
 
 interface SessionData {
-  keyword: string;
+  keywords: string[];
   days: number;
-  articles: SearchArticle[];
+  articlesByKeyword: Record<string, SearchArticle[]>;
   selectedArticles?: SearchArticle[];
   status: "searched" | "processing" | "done" | "error";
   outputPath?: string;
   sseClients: Set<express.Response>;
   logs: Array<{ level: string; message: string; timestamp: string }>;
+  sendEmail?: boolean;
 }
 
 const sessions = new Map<string, SessionData>();
@@ -139,6 +141,51 @@ function cleanupSessions(): void {
 setInterval(cleanupSessions, 5 * 60 * 1000);
 
 // ---------------------------------------------------------------------------
+// Email settings helpers
+// ---------------------------------------------------------------------------
+
+function getEmailSettings(): {
+  host: string; port: number; user: string; pass: string;
+  from: string; to: string; enabled: boolean;
+} {
+  return {
+    host: process.env.SMTP_HOST || "",
+    port: parseInt(process.env.SMTP_PORT || "587", 10),
+    user: process.env.SMTP_USER || "",
+    pass: process.env.SMTP_PASS || "",
+    from: process.env.EMAIL_FROM || process.env.SMTP_USER || "",
+    to: process.env.EMAIL_TO || "",
+    enabled: !!(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS && process.env.EMAIL_TO),
+  };
+}
+
+async function sendEmailWithAttachment(filePath: string, keywords: string[]): Promise<void> {
+  const email = getEmailSettings();
+  if (!email.enabled) {
+    throw new Error("이메일 설정이 완료되지 않았습니다.");
+  }
+
+  const transporter = nodemailer.createTransport({
+    host: email.host,
+    port: email.port,
+    secure: email.port === 465,
+    auth: { user: email.user, pass: email.pass },
+  });
+
+  const filename = path.basename(filePath);
+  const today = new Date();
+  const dateStr = `${today.getFullYear()}/${today.getMonth() + 1}/${today.getDate()}`;
+
+  await transporter.sendMail({
+    from: email.from,
+    to: email.to,
+    subject: `[뉴스 클리핑] ${keywords.join(", ")} — ${dateStr}`,
+    text: `뉴스 클리핑 리포트가 생성되었습니다.\n\n키워드: ${keywords.join(", ")}\n생성일: ${dateStr}\n\n첨부된 DOCX 파일을 확인해주세요.`,
+    attachments: [{ filename, path: filePath }],
+  });
+}
+
+// ---------------------------------------------------------------------------
 // HTML template
 // ---------------------------------------------------------------------------
 
@@ -208,9 +255,11 @@ function buildPageHtml(): string {
       margin-bottom: 6px;
     }
     .form-group input[type="text"],
-    .form-group input[type="number"] {
+    .form-group input[type="number"],
+    .form-group input[type="email"],
+    .form-group input[type="password"] {
       width: 100%;
-      max-width: 400px;
+      max-width: 500px;
       padding: 10px 14px;
       border: 1px solid #ddd;
       border-radius: 8px;
@@ -219,6 +268,11 @@ function buildPageHtml(): string {
       outline: none;
     }
     .form-group input:focus { border-color: #03c75a; }
+    .form-group .hint {
+      font-size: 12px;
+      color: #999;
+      margin-top: 4px;
+    }
 
     /* Buttons */
     .btn {
@@ -254,6 +308,50 @@ function buildPageHtml(): string {
       border-color: #dee2e6;
     }
     .btn-secondary:hover { background: #e9ecef; }
+    .btn-sm { padding: 6px 14px; font-size: 12px; }
+
+    /* Keyword group */
+    .keyword-group {
+      margin-bottom: 24px;
+      border: 1px solid #e9ecef;
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .keyword-group-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 16px;
+      background: #f8f9fa;
+      border-bottom: 1px solid #e9ecef;
+      cursor: pointer;
+      user-select: none;
+    }
+    .keyword-group-header:hover { background: #f0f1f3; }
+    .keyword-group-header .kw-name {
+      font-weight: 700;
+      font-size: 15px;
+      color: #1a1a1a;
+    }
+    .keyword-group-header .kw-count {
+      font-size: 13px;
+      color: #666;
+      background: #e9ecef;
+      padding: 2px 10px;
+      border-radius: 12px;
+    }
+    .keyword-group-header .kw-actions {
+      margin-left: auto;
+      display: flex;
+      gap: 6px;
+    }
+    .keyword-group-header .kw-toggle {
+      font-size: 12px;
+      color: #999;
+      transition: transform 0.2s;
+    }
+    .keyword-group.collapsed .keyword-group-body { display: none; }
+    .keyword-group.collapsed .kw-toggle { transform: rotate(-90deg); }
 
     /* Article table */
     .article-controls {
@@ -269,18 +367,13 @@ function buildPageHtml(): string {
       color: #666;
     }
 
-    .article-table-wrapper {
-      overflow-x: auto;
-      border-radius: 8px;
-      border: 1px solid #eee;
-    }
     .article-table {
       width: 100%;
       border-collapse: collapse;
     }
     .article-table thead { background: #fafafa; }
     .article-table th {
-      padding: 12px 14px;
+      padding: 10px 14px;
       text-align: left;
       font-size: 13px;
       font-weight: 600;
@@ -305,6 +398,22 @@ function buildPageHtml(): string {
     .article-table .col-title a:visited { color: #681da8; }
     .article-table .col-press { width: 130px; color: #555; white-space: nowrap; }
     .article-table .col-date { width: 110px; color: #999; white-space: nowrap; }
+
+    /* Keyword context snippet */
+    .keyword-context {
+      font-size: 12px;
+      color: #777;
+      margin-top: 4px;
+      line-height: 1.5;
+    }
+    .keyword-context mark {
+      background: #fff3cd;
+      color: #856404;
+      padding: 1px 3px;
+      border-radius: 3px;
+      font-weight: 600;
+    }
+
     input[type="checkbox"] {
       width: 18px;
       height: 18px;
@@ -403,6 +512,44 @@ function buildPageHtml(): string {
     }
     .error-box.visible { display: block; }
 
+    /* Email toggle */
+    .email-toggle {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 16px;
+      background: #f0f7ff;
+      border: 1px solid #d0e3f7;
+      border-radius: 8px;
+      margin-bottom: 16px;
+    }
+    .email-toggle label {
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .email-toggle .email-to {
+      font-size: 13px;
+      color: #666;
+      margin-left: auto;
+    }
+
+    /* Settings groups */
+    .settings-group {
+      margin-top: 24px;
+      padding-top: 20px;
+      border-top: 1px solid #eee;
+    }
+    .settings-group-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: #333;
+      margin-bottom: 12px;
+    }
+
     /* Spinner */
     .spinner {
       display: inline-block;
@@ -438,30 +585,59 @@ function buildPageHtml(): string {
 
     <!-- Section 0: Setup -->
     <div class="section" id="sectionSetup">
-      <div class="section-title">⚙️ 초기 설정</div>
+      <div class="section-title">초기 설정</div>
       <p style="color:#666;margin-bottom:20px;">서비스를 사용하려면 API 키를 입력하세요. 설정은 .env 파일에 저장됩니다.</p>
       <form id="setupForm">
         <div class="form-group">
           <label for="setupAnthropicKey">Anthropic API Key (필수)</label>
           <input type="text" id="setupAnthropicKey" placeholder="sk-ant-..." required
-                 style="max-width:500px;font-family:monospace;" />
+                 style="font-family:monospace;" />
         </div>
         <div class="form-group">
           <label for="setupClaudeModel">Claude 모델</label>
-          <input type="text" id="setupClaudeModel" value="" placeholder="claude-sonnet-4-20250514"
-                 style="max-width:400px;font-family:monospace;" />
+          <input type="text" id="setupClaudeModel" value="" placeholder="claude-opus-4-6"
+                 style="font-family:monospace;" />
         </div>
         <div class="form-group">
           <label for="setupNaverId">네이버 Client ID (선택)</label>
           <input type="text" id="setupNaverId" placeholder=""
-                 style="max-width:400px;font-family:monospace;" />
+                 style="font-family:monospace;" />
         </div>
         <div class="form-group">
           <label for="setupNaverSecret">네이버 Client Secret (선택)</label>
           <input type="text" id="setupNaverSecret" placeholder=""
-                 style="max-width:400px;font-family:monospace;" />
+                 style="font-family:monospace;" />
         </div>
-        <button type="submit" class="btn btn-primary" id="setupBtn">저장 및 시작</button>
+
+        <div class="settings-group">
+          <div class="settings-group-title">메일 발송 설정 (선택)</div>
+          <p style="color:#999;font-size:13px;margin-bottom:12px;">설정하면 리포트 생성 후 자동으로 메일 발송 가능. 한번 설정하면 계속 유지됩니다.</p>
+          <div class="form-group">
+            <label for="setupSmtpHost">SMTP 서버</label>
+            <input type="text" id="setupSmtpHost" placeholder="smtp.gmail.com" />
+            <div class="hint">Gmail: smtp.gmail.com / Naver: smtp.naver.com / Daum: smtp.daum.net</div>
+          </div>
+          <div class="form-group">
+            <label for="setupSmtpPort">SMTP 포트</label>
+            <input type="number" id="setupSmtpPort" value="587" min="1" max="65535" style="max-width:120px;" />
+            <div class="hint">587 (TLS) 또는 465 (SSL)</div>
+          </div>
+          <div class="form-group">
+            <label for="setupSmtpUser">SMTP 사용자 (이메일)</label>
+            <input type="email" id="setupSmtpUser" placeholder="your@email.com" />
+          </div>
+          <div class="form-group">
+            <label for="setupSmtpPass">SMTP 비밀번호 / 앱 비밀번호</label>
+            <input type="password" id="setupSmtpPass" placeholder="" />
+            <div class="hint">Gmail은 앱 비밀번호 사용 필요 (Google 계정 > 보안 > 2단계 인증 > 앱 비밀번호)</div>
+          </div>
+          <div class="form-group">
+            <label for="setupEmailTo">수신 이메일</label>
+            <input type="email" id="setupEmailTo" placeholder="recipient@email.com" />
+          </div>
+        </div>
+
+        <button type="submit" class="btn btn-primary" id="setupBtn" style="margin-top:20px;">저장 및 시작</button>
       </form>
     </div>
 
@@ -470,9 +646,10 @@ function buildPageHtml(): string {
       <div class="section-title">검색 설정</div>
       <form id="searchForm">
         <div class="form-group">
-          <label for="keyword">검색 키워드 (필수)</label>
-          <input type="text" id="keyword" name="keyword" required
-                 placeholder="예: 삼성전자 인수합병" autocomplete="off" />
+          <label for="keywords">검색 키워드 (쉼표로 구분, 복수 입력 가능)</label>
+          <input type="text" id="keywords" name="keywords" required
+                 placeholder="예: 사모펀드, 인수합병, M&A" autocomplete="off" />
+          <div class="hint">키워드를 쉼표(,)로 구분하면 각 키워드별로 검색합니다</div>
         </div>
         <div class="form-group">
           <label for="days">검색 기간 (일)</label>
@@ -482,7 +659,7 @@ function buildPageHtml(): string {
           <label>검색 방법</label>
           <div style="display:flex;gap:16px;margin-top:4px;">
             <label style="display:flex;align-items:center;gap:6px;font-weight:400;cursor:pointer;">
-              <input type="radio" name="method" value="auto" checked style="accent-color:#03c75a;" /> 자동 (API 우선→스크래핑 폴백)
+              <input type="radio" name="method" value="auto" checked style="accent-color:#03c75a;" /> 자동 (API 우선)
             </label>
             <label style="display:flex;align-items:center;gap:6px;font-weight:400;cursor:pointer;">
               <input type="radio" name="method" value="api" style="accent-color:#03c75a;" /> 네이버 API
@@ -492,6 +669,7 @@ function buildPageHtml(): string {
             </label>
           </div>
         </div>
+        <div id="emailToggleArea"></div>
         <button type="submit" class="btn btn-primary" id="searchBtn">검색 시작</button>
       </form>
       <div class="log-area" id="searchLogArea" style="display:none;margin-top:20px;"></div>
@@ -499,28 +677,13 @@ function buildPageHtml(): string {
 
     <!-- Section 2: Results -->
     <div class="section" id="sectionResults">
-      <div class="section-title">검색 결과 — <span id="resultKeyword"></span></div>
+      <div class="section-title">검색 결과</div>
       <div class="article-controls">
-        <button type="button" class="btn btn-secondary" onclick="selectAllArticles()">전체 선택</button>
-        <button type="button" class="btn btn-secondary" onclick="deselectAllArticles()">전체 해제</button>
-        <span class="count" id="articleCount"></span>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="selectAllGroups()">전체 선택</button>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="deselectAllGroups()">전체 해제</button>
+        <span class="count" id="totalArticleCount"></span>
       </div>
-      <div class="article-table-wrapper">
-        <table class="article-table">
-          <thead>
-            <tr>
-              <th class="col-check">
-                <input type="checkbox" id="headerCheckbox" checked onchange="toggleAllArticles(this)" />
-              </th>
-              <th class="col-idx">#</th>
-              <th>기사 제목</th>
-              <th class="col-press">언론사</th>
-              <th class="col-date">날짜</th>
-            </tr>
-          </thead>
-          <tbody id="articleTableBody"></tbody>
-        </table>
-      </div>
+      <div id="articleGroupsContainer"></div>
       <div style="margin-top: 20px; text-align: right;">
         <button type="button" class="btn btn-primary" id="processBtn"
                 onclick="startProcessing()">선택 완료 및 분석 시작</button>
@@ -557,15 +720,19 @@ function buildPageHtml(): string {
     // -----------------------------------------------------------------------
     // State
     // -----------------------------------------------------------------------
-    let currentSessionId = null;
-    let currentArticles = [];
-    let eventSource = null;
+    var currentSessionId = null;
+    var currentArticlesByKeyword = {};
+    var currentKeywords = [];
+    var eventSource = null;
+    var emailEnabled = false;
+    var emailConfigured = false;
+    var emailTo = '';
 
     // -----------------------------------------------------------------------
     // Utility
     // -----------------------------------------------------------------------
     function escapeHtml(str) {
-      const div = document.createElement('div');
+      var div = document.createElement('div');
       div.appendChild(document.createTextNode(str));
       return div.innerHTML;
     }
@@ -582,10 +749,44 @@ function buildPageHtml(): string {
       setTimeout(function() { el.classList.remove('visible'); }, 8000);
     }
 
-    function updateArticleCount() {
+    /** 키워드 전후 문맥 추출 (하이라이트 포함) */
+    function getKeywordContext(text, keyword) {
+      if (!text || !keyword) return '';
+      var lower = text.toLowerCase();
+      var kwLower = keyword.toLowerCase();
+      var idx = lower.indexOf(kwLower);
+      if (idx === -1) return '';
+
+      var contextRadius = 30;
+      var start = Math.max(0, idx - contextRadius);
+      var end = Math.min(text.length, idx + keyword.length + contextRadius);
+      var before = (start > 0 ? '...' : '') + escapeHtml(text.substring(start, idx));
+      var match = '<mark>' + escapeHtml(text.substring(idx, idx + keyword.length)) + '</mark>';
+      var after = escapeHtml(text.substring(idx + keyword.length, end)) + (end < text.length ? '...' : '');
+      return before + match + after;
+    }
+
+    function updateTotalCount() {
       var checked = document.querySelectorAll('.article-cb:checked').length;
-      document.getElementById('articleCount').textContent =
-        '선택: ' + checked + ' / ' + currentArticles.length + '건';
+      var total = document.querySelectorAll('.article-cb').length;
+      document.getElementById('totalArticleCount').textContent = '선택: ' + checked + ' / ' + total + '건';
+    }
+
+    // -----------------------------------------------------------------------
+    // Email toggle
+    // -----------------------------------------------------------------------
+    function renderEmailToggle() {
+      var area = document.getElementById('emailToggleArea');
+      if (!emailConfigured) {
+        area.innerHTML = '';
+        return;
+      }
+      var checked = emailEnabled ? 'checked' : '';
+      area.innerHTML =
+        '<div class="email-toggle">' +
+        '  <label><input type="checkbox" id="emailCheck" ' + checked + ' onchange="emailEnabled=this.checked;localStorage.setItem(\\'emailEnabled\\',this.checked)" style="width:18px;height:18px;accent-color:#03c75a;" /> 완료 시 메일로 발송</label>' +
+        '  <span class="email-to">' + escapeHtml(emailTo) + '</span>' +
+        '</div>';
     }
 
     // -----------------------------------------------------------------------
@@ -601,14 +802,13 @@ function buildPageHtml(): string {
         var levelClass = 'log-info';
         if (log.level === 'warn') levelClass = 'log-warn';
         if (log.level === 'error') levelClass = 'log-error';
-        if (log.level === 'debug') levelClass = 'log-info';
 
         var time = '';
         try { time = new Date(log.timestamp).toLocaleTimeString('ko-KR'); } catch(e) {}
 
         var line = document.createElement('div');
         var text = escapeHtml(log.message);
-        if (log.details) { text += '\\n  → ' + escapeHtml(log.details.substring(0, 300)); }
+        if (log.details) { text += '\\n  -> ' + escapeHtml(log.details.substring(0, 300)); }
         line.innerHTML =
           '<span class="log-time">[' + escapeHtml(time) + ']</span> ' +
           '<span class="' + levelClass + '">' + text + '</span>';
@@ -619,11 +819,11 @@ function buildPageHtml(): string {
 
     document.getElementById('searchForm').addEventListener('submit', async function(e) {
       e.preventDefault();
-      var keyword = document.getElementById('keyword').value.trim();
+      var keywordsRaw = document.getElementById('keywords').value.trim();
       var days = parseInt(document.getElementById('days').value, 10);
       var methodEl = document.querySelector('input[name="method"]:checked');
       var method = methodEl ? methodEl.value : 'auto';
-      if (!keyword) { showError('키워드를 입력해주세요.'); return; }
+      if (!keywordsRaw) { showError('키워드를 입력해주세요.'); return; }
       if (isNaN(days) || days < 1) { days = 7; }
 
       var btn = document.getElementById('searchBtn');
@@ -631,11 +831,14 @@ function buildPageHtml(): string {
       btn.innerHTML = '<span class="spinner"></span>검색 중...';
       document.getElementById('searchLogArea').style.display = 'none';
 
+      // 이메일 설정 반영
+      var sendEmail = emailEnabled && emailConfigured;
+
       try {
         var res = await fetch('/api/search', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ keyword: keyword, days: days, method: method })
+          body: JSON.stringify({ keywords: keywordsRaw, days: days, method: method, sendEmail: sendEmail })
         });
         var data = await res.json();
 
@@ -645,9 +848,10 @@ function buildPageHtml(): string {
         }
 
         currentSessionId = data.sessionId;
-        currentArticles = data.articles;
+        currentArticlesByKeyword = data.articlesByKeyword;
+        currentKeywords = data.keywords;
 
-        if (data.count === 0) {
+        if (data.totalCount === 0) {
           showError('검색 결과가 없습니다. 키워드나 기간을 변경해보세요.');
           renderSearchLogs(data.logs);
           btn.disabled = false;
@@ -656,7 +860,7 @@ function buildPageHtml(): string {
         }
 
         renderSearchLogs(null);
-        renderArticleTable(data.articles, keyword);
+        renderArticleGroups(data.articlesByKeyword, data.keywords);
         showSection('sectionResults');
       } catch (err) {
         showError(err.message || '검색 중 오류가 발생했습니다.');
@@ -667,56 +871,120 @@ function buildPageHtml(): string {
     });
 
     // -----------------------------------------------------------------------
-    // Section 2: Article Selection
+    // Section 2: Article Selection (키워드별 그룹)
     // -----------------------------------------------------------------------
-    function renderArticleTable(articles, keyword) {
-      document.getElementById('resultKeyword').textContent = '"' + escapeHtml(keyword) + '" ' + articles.length + '건';
+    function renderArticleGroups(articlesByKeyword, keywords) {
+      var container = document.getElementById('articleGroupsContainer');
+      container.innerHTML = '';
 
-      var tbody = document.getElementById('articleTableBody');
-      tbody.innerHTML = '';
+      keywords.forEach(function(kw) {
+        var articles = articlesByKeyword[kw] || [];
+        if (articles.length === 0) return;
 
-      articles.forEach(function(a, i) {
-        var tr = document.createElement('tr');
-        var link = a.naverLink || a.originalLink;
+        var group = document.createElement('div');
+        group.className = 'keyword-group';
+        group.dataset.keyword = kw;
 
-        tr.innerHTML =
-          '<td class="col-check"><input type="checkbox" class="article-cb" value="' + i + '" checked onchange="updateArticleCount()" /></td>' +
-          '<td class="col-idx">' + (i + 1) + '</td>' +
-          '<td class="col-title"><a href="' + escapeHtml(link) + '" target="_blank" rel="noopener">' + escapeHtml(a.title) + '</a></td>' +
-          '<td class="col-press">' + escapeHtml(a.press) + '</td>' +
-          '<td class="col-date">' + escapeHtml(a.date) + '</td>';
+        // Header
+        var header = document.createElement('div');
+        header.className = 'keyword-group-header';
+        header.innerHTML =
+          '<span class="kw-toggle">&#x25BC;</span>' +
+          '<span class="kw-name">' + escapeHtml(kw) + '</span>' +
+          '<span class="kw-count">' + articles.length + '건</span>' +
+          '<span class="kw-actions">' +
+          '  <button type="button" class="btn btn-sm btn-secondary" onclick="event.stopPropagation();selectGroup(\\'' + escapeHtml(kw).replace(/'/g, "\\\\'") + '\\')">선택</button>' +
+          '  <button type="button" class="btn btn-sm btn-secondary" onclick="event.stopPropagation();deselectGroup(\\'' + escapeHtml(kw).replace(/'/g, "\\\\'") + '\\')">해제</button>' +
+          '</span>';
+        header.onclick = function() { group.classList.toggle('collapsed'); };
 
-        tbody.appendChild(tr);
+        // Body (table)
+        var body = document.createElement('div');
+        body.className = 'keyword-group-body';
+
+        var table = document.createElement('table');
+        table.className = 'article-table';
+        table.innerHTML =
+          '<thead><tr>' +
+          '<th class="col-check"><input type="checkbox" checked onchange="toggleGroup(this, \\'' + escapeHtml(kw).replace(/'/g, "\\\\'") + '\\')" /></th>' +
+          '<th class="col-idx">#</th>' +
+          '<th>기사 제목</th>' +
+          '<th class="col-press">언론사</th>' +
+          '<th class="col-date">날짜</th>' +
+          '</tr></thead>';
+
+        var tbody = document.createElement('tbody');
+        articles.forEach(function(a, i) {
+          var tr = document.createElement('tr');
+          var link = a.naverLink || a.originalLink;
+
+          // 키워드 문맥 추출
+          var contextHtml = '';
+          var ctx = getKeywordContext(a.title, kw);
+          if (!ctx) ctx = getKeywordContext(a.summary, kw);
+          if (ctx) {
+            contextHtml = '<div class="keyword-context">' + ctx + '</div>';
+          }
+
+          tr.innerHTML =
+            '<td class="col-check"><input type="checkbox" class="article-cb" data-keyword="' + escapeHtml(kw) + '" data-index="' + i + '" checked onchange="updateTotalCount()" /></td>' +
+            '<td class="col-idx">' + (i + 1) + '</td>' +
+            '<td class="col-title"><a href="' + escapeHtml(link) + '" target="_blank" rel="noopener">' + escapeHtml(a.title) + '</a>' + contextHtml + '</td>' +
+            '<td class="col-press">' + escapeHtml(a.press) + '</td>' +
+            '<td class="col-date">' + escapeHtml(a.date) + '</td>';
+
+          tbody.appendChild(tr);
+        });
+
+        table.appendChild(tbody);
+        body.appendChild(table);
+        group.appendChild(header);
+        group.appendChild(body);
+        container.appendChild(group);
       });
 
-      document.getElementById('headerCheckbox').checked = true;
-      updateArticleCount();
+      updateTotalCount();
     }
 
-    function selectAllArticles() {
+    function selectGroup(kw) {
+      document.querySelectorAll('.article-cb[data-keyword="' + kw + '"]').forEach(function(cb) { cb.checked = true; });
+      updateTotalCount();
+    }
+
+    function deselectGroup(kw) {
+      document.querySelectorAll('.article-cb[data-keyword="' + kw + '"]').forEach(function(cb) { cb.checked = false; });
+      updateTotalCount();
+    }
+
+    function toggleGroup(headerCb, kw) {
+      document.querySelectorAll('.article-cb[data-keyword="' + kw + '"]').forEach(function(cb) { cb.checked = headerCb.checked; });
+      updateTotalCount();
+    }
+
+    function selectAllGroups() {
       document.querySelectorAll('.article-cb').forEach(function(cb) { cb.checked = true; });
-      document.getElementById('headerCheckbox').checked = true;
-      updateArticleCount();
+      document.querySelectorAll('.keyword-group-header input[type="checkbox"]').forEach(function(cb) { cb.checked = true; });
+      updateTotalCount();
     }
 
-    function deselectAllArticles() {
+    function deselectAllGroups() {
       document.querySelectorAll('.article-cb').forEach(function(cb) { cb.checked = false; });
-      document.getElementById('headerCheckbox').checked = false;
-      updateArticleCount();
-    }
-
-    function toggleAllArticles(header) {
-      document.querySelectorAll('.article-cb').forEach(function(cb) { cb.checked = header.checked; });
-      updateArticleCount();
+      document.querySelectorAll('.keyword-group-header input[type="checkbox"]').forEach(function(cb) { cb.checked = false; });
+      updateTotalCount();
     }
 
     async function startProcessing() {
-      var selected = [];
+      // 키워드별 선택된 인덱스 수집
+      var selectedByKeyword = {};
       document.querySelectorAll('.article-cb:checked').forEach(function(cb) {
-        selected.push(parseInt(cb.value, 10));
+        var kw = cb.dataset.keyword;
+        var idx = parseInt(cb.dataset.index, 10);
+        if (!selectedByKeyword[kw]) selectedByKeyword[kw] = [];
+        selectedByKeyword[kw].push(idx);
       });
 
-      if (selected.length === 0) {
+      var totalSelected = Object.values(selectedByKeyword).reduce(function(sum, arr) { return sum + arr.length; }, 0);
+      if (totalSelected === 0) {
         showError('최소 1개 이상의 기사를 선택해주세요.');
         return;
       }
@@ -729,7 +997,7 @@ function buildPageHtml(): string {
         var res = await fetch('/api/process', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sessionId: currentSessionId, selected: selected })
+          body: JSON.stringify({ sessionId: currentSessionId, selectedByKeyword: selectedByKeyword })
         });
         var data = await res.json();
         if (!res.ok) { throw new Error(data.error || '처리 시작 실패'); }
@@ -773,7 +1041,7 @@ function buildPageHtml(): string {
           if (eventSource) { eventSource.close(); eventSource = null; }
           document.getElementById('progressBar').style.width = '100%';
           document.getElementById('stepLabel').textContent = '완료!';
-          showComplete(data.filename);
+          showComplete(data.filename, data.emailSent);
         }
 
         if (data.type === 'error') {
@@ -815,17 +1083,20 @@ function buildPageHtml(): string {
     // -----------------------------------------------------------------------
     // Section 4: Complete
     // -----------------------------------------------------------------------
-    function showComplete(filename) {
-      document.getElementById('completeDetail').textContent = filename;
+    function showComplete(filename, emailSent) {
+      var detail = filename;
+      if (emailSent) detail += ' (메일 발송 완료)';
+      document.getElementById('completeDetail').textContent = detail;
       document.getElementById('downloadBtn').href = '/api/download/' + encodeURIComponent(filename);
       showSection('sectionComplete');
     }
 
     function resetApp() {
       currentSessionId = null;
-      currentArticles = [];
+      currentArticlesByKeyword = {};
+      currentKeywords = [];
       if (eventSource) { eventSource.close(); eventSource = null; }
-      document.getElementById('keyword').value = '';
+      document.getElementById('keywords').value = '';
       document.getElementById('days').value = '7';
       document.getElementById('globalError').classList.remove('visible');
       document.getElementById('processBtn').disabled = false;
@@ -847,6 +1118,11 @@ function buildPageHtml(): string {
         CLAUDE_MODEL: document.getElementById('setupClaudeModel').value.trim(),
         NAVER_CLIENT_ID: document.getElementById('setupNaverId').value.trim(),
         NAVER_CLIENT_SECRET: document.getElementById('setupNaverSecret').value.trim(),
+        SMTP_HOST: document.getElementById('setupSmtpHost').value.trim(),
+        SMTP_PORT: document.getElementById('setupSmtpPort').value.trim(),
+        SMTP_USER: document.getElementById('setupSmtpUser').value.trim(),
+        SMTP_PASS: document.getElementById('setupSmtpPass').value.trim(),
+        EMAIL_TO: document.getElementById('setupEmailTo').value.trim(),
       };
 
       if (!settings.ANTHROPIC_API_KEY) {
@@ -865,6 +1141,13 @@ function buildPageHtml(): string {
         var data = await res.json();
         if (!res.ok) throw new Error(data.error || '저장 실패');
 
+        // 이메일 설정 상태 갱신
+        emailConfigured = !!(settings.SMTP_HOST && settings.SMTP_USER && settings.SMTP_PASS && settings.EMAIL_TO);
+        emailTo = settings.EMAIL_TO;
+        if (emailConfigured) emailEnabled = true;
+        localStorage.setItem('emailEnabled', String(emailEnabled));
+        renderEmailToggle();
+
         showSection('sectionSearch');
       } catch (err) {
         showError(err.message);
@@ -878,11 +1161,23 @@ function buildPageHtml(): string {
       try {
         var res = await fetch('/api/settings');
         var data = await res.json();
+
+        // 이메일 설정 상태
+        emailConfigured = data.emailConfigured || false;
+        emailTo = (data.current && data.current.EMAIL_TO) || '';
+        var stored = localStorage.getItem('emailEnabled');
+        emailEnabled = stored !== null ? stored === 'true' : emailConfigured;
+        renderEmailToggle();
+
         if (data.needsSetup) {
           // Pre-fill existing values
           if (data.current.CLAUDE_MODEL) document.getElementById('setupClaudeModel').value = data.current.CLAUDE_MODEL;
           if (data.current.NAVER_CLIENT_ID) document.getElementById('setupNaverId').value = data.current.NAVER_CLIENT_ID;
           if (data.current.NAVER_CLIENT_SECRET) document.getElementById('setupNaverSecret').value = data.current.NAVER_CLIENT_SECRET;
+          if (data.current.SMTP_HOST) document.getElementById('setupSmtpHost').value = data.current.SMTP_HOST;
+          if (data.current.SMTP_PORT) document.getElementById('setupSmtpPort').value = data.current.SMTP_PORT;
+          if (data.current.SMTP_USER) document.getElementById('setupSmtpUser').value = data.current.SMTP_USER;
+          if (data.current.EMAIL_TO) document.getElementById('setupEmailTo').value = data.current.EMAIL_TO;
           showSection('sectionSetup');
         } else {
           showSection('sectionSearch');
@@ -928,12 +1223,18 @@ export function createApp(claudeModel: string): { app: express.Express } {
   // GET /api/settings — 현재 설정 상태 확인
   // -------------------------------------------------------------------------
   app.get("/api/settings", (_req, res) => {
+    const email = getEmailSettings();
     res.json({
       needsSetup: !isSetupComplete(),
+      emailConfigured: email.enabled,
       current: {
         CLAUDE_MODEL: process.env.CLAUDE_MODEL || "",
         NAVER_CLIENT_ID: process.env.NAVER_CLIENT_ID || "",
         NAVER_CLIENT_SECRET: process.env.NAVER_CLIENT_SECRET || "",
+        SMTP_HOST: process.env.SMTP_HOST || "",
+        SMTP_PORT: process.env.SMTP_PORT || "587",
+        SMTP_USER: process.env.SMTP_USER || "",
+        EMAIL_TO: process.env.EMAIL_TO || "",
       },
     });
   });
@@ -946,19 +1247,25 @@ export function createApp(claudeModel: string): { app: express.Express } {
       const body = req.body as Record<string, string>;
       const envPath = path.resolve(".env");
 
+      const envKeys = [
+        "ANTHROPIC_API_KEY", "CLAUDE_MODEL",
+        "NAVER_CLIENT_ID", "NAVER_CLIENT_SECRET",
+        "SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS",
+        "EMAIL_FROM", "EMAIL_TO",
+      ];
+
       const lines: string[] = [];
-      if (body.ANTHROPIC_API_KEY) lines.push(`ANTHROPIC_API_KEY=${body.ANTHROPIC_API_KEY}`);
-      if (body.CLAUDE_MODEL) lines.push(`CLAUDE_MODEL=${body.CLAUDE_MODEL}`);
-      if (body.NAVER_CLIENT_ID) lines.push(`NAVER_CLIENT_ID=${body.NAVER_CLIENT_ID}`);
-      if (body.NAVER_CLIENT_SECRET) lines.push(`NAVER_CLIENT_SECRET=${body.NAVER_CLIENT_SECRET}`);
+      for (const key of envKeys) {
+        const val = body[key] || process.env[key] || "";
+        if (val) lines.push(`${key}=${val}`);
+      }
 
       fs.writeFileSync(envPath, lines.join("\n") + "\n", "utf-8");
 
       // 환경변수 즉시 반영
-      if (body.ANTHROPIC_API_KEY) process.env.ANTHROPIC_API_KEY = body.ANTHROPIC_API_KEY;
-      if (body.CLAUDE_MODEL) process.env.CLAUDE_MODEL = body.CLAUDE_MODEL;
-      if (body.NAVER_CLIENT_ID) process.env.NAVER_CLIENT_ID = body.NAVER_CLIENT_ID;
-      if (body.NAVER_CLIENT_SECRET) process.env.NAVER_CLIENT_SECRET = body.NAVER_CLIENT_SECRET;
+      for (const key of envKeys) {
+        if (body[key]) process.env[key] = body[key];
+      }
 
       logger.info("설정이 저장되었습니다.");
       res.json({ ok: true });
@@ -970,7 +1277,7 @@ export function createApp(claudeModel: string): { app: express.Express } {
   });
 
   // -------------------------------------------------------------------------
-  // POST /api/search
+  // POST /api/search — 복수 키워드 검색
   // -------------------------------------------------------------------------
   app.post("/api/search", async (req, res) => {
     // 검색 중 발생하는 로그를 캡처
@@ -985,13 +1292,26 @@ export function createApp(claudeModel: string): { app: express.Express } {
     });
 
     try {
-      const { keyword, days, method } = req.body as {
-        keyword: unknown;
+      const { keywords: keywordsRaw, days, method, sendEmail } = req.body as {
+        keywords: unknown;
         days: unknown;
         method: unknown;
+        sendEmail: unknown;
       };
 
-      if (!keyword || typeof keyword !== "string" || keyword.trim().length === 0) {
+      if (!keywordsRaw || typeof keywordsRaw !== "string" || keywordsRaw.trim().length === 0) {
+        unsubscribe();
+        res.status(400).json({ error: "키워드를 입력해주세요." });
+        return;
+      }
+
+      // 쉼표로 구분된 키워드 파싱
+      const keywords = keywordsRaw
+        .split(",")
+        .map((k: string) => k.trim())
+        .filter((k: string) => k.length > 0);
+
+      if (keywords.length === 0) {
         unsubscribe();
         res.status(400).json({ error: "키워드를 입력해주세요." });
         return;
@@ -1003,32 +1323,44 @@ export function createApp(claudeModel: string): { app: express.Express } {
       const searchMethod: SearchMethod =
         method === "api" ? "api" : method === "scraping" ? "scraping" : "auto";
 
-      logger.info(`검색 요청: "${keyword}" (최근 ${parsedDays}일, 방법: ${searchMethod})`);
+      logger.info(`검색 요청: "${keywords.join(", ")}" (최근 ${parsedDays}일, 방법: ${searchMethod})`);
 
-      const articles = await scrapeNaverNews(keyword.trim(), parsedDays, searchMethod);
+      // 각 키워드별로 검색
+      const articlesByKeyword: Record<string, SearchArticle[]> = {};
+      let totalCount = 0;
+
+      for (const kw of keywords) {
+        logger.info(`키워드 "${kw}" 검색 시작...`);
+        const articles = await scrapeNaverNews(kw, parsedDays, searchMethod);
+        articlesByKeyword[kw] = articles;
+        totalCount += articles.length;
+        logger.info(`키워드 "${kw}" 검색 완료: ${articles.length}건`);
+      }
 
       const sessionId = crypto.randomUUID();
       const session: SessionData = {
-        keyword: keyword.trim(),
+        keywords,
         days: parsedDays,
-        articles,
+        articlesByKeyword,
         status: "searched",
         sseClients: new Set(),
         logs: [],
+        sendEmail: sendEmail === true,
       };
       sessions.set(sessionId, session);
       sessionCreatedAt.set(sessionId, Date.now());
 
       logger.info(
-        `검색 완료: "${keyword}" — ${articles.length}건 (세션: ${sessionId})`,
+        `검색 완료: "${keywords.join(", ")}" — 총 ${totalCount}건 (세션: ${sessionId})`,
       );
 
       unsubscribe();
 
       res.json({
         sessionId,
-        articles,
-        count: articles.length,
+        keywords,
+        articlesByKeyword,
+        totalCount,
         logs: searchLogs,
       });
     } catch (err) {
@@ -1041,13 +1373,13 @@ export function createApp(claudeModel: string): { app: express.Express } {
   });
 
   // -------------------------------------------------------------------------
-  // POST /api/process
+  // POST /api/process — 키워드별 선택 처리
   // -------------------------------------------------------------------------
   app.post("/api/process", (req, res) => {
     try {
-      const { sessionId, selected } = req.body as {
+      const { sessionId, selectedByKeyword } = req.body as {
         sessionId: unknown;
-        selected: unknown;
+        selectedByKeyword: unknown;
       };
 
       if (typeof sessionId !== "string" || !sessions.has(sessionId)) {
@@ -1062,25 +1394,36 @@ export function createApp(claudeModel: string): { app: express.Express } {
         return;
       }
 
-      if (!Array.isArray(selected)) {
+      if (!selectedByKeyword || typeof selectedByKeyword !== "object") {
         res.status(400).json({ error: "선택된 기사 목록이 필요합니다." });
         return;
       }
 
-      const validIndices = (selected as unknown[]).filter(
-        (i): i is number =>
-          typeof i === "number" &&
-          Number.isInteger(i) &&
-          i >= 0 &&
-          i < session.articles.length,
-      );
+      // 키워드별 선택된 기사 수집
+      const selected: SearchArticle[] = [];
+      const selMap = selectedByKeyword as Record<string, number[]>;
 
-      if (validIndices.length === 0) {
+      for (const [kw, indices] of Object.entries(selMap)) {
+        const kwArticles = session.articlesByKeyword[kw];
+        if (!kwArticles) continue;
+        for (const idx of indices) {
+          if (typeof idx === "number" && idx >= 0 && idx < kwArticles.length) {
+            // 중복 방지 (같은 기사가 여러 키워드에 있을 수 있음)
+            const article = kwArticles[idx];
+            const key = article.naverLink || article.originalLink;
+            if (!selected.some(a => (a.naverLink || a.originalLink) === key)) {
+              selected.push(article);
+            }
+          }
+        }
+      }
+
+      if (selected.length === 0) {
         res.status(400).json({ error: "유효한 기사가 선택되지 않았습니다." });
         return;
       }
 
-      session.selectedArticles = validIndices.map((i) => session.articles[i]);
+      session.selectedArticles = selected;
       session.status = "processing";
 
       // Return immediately
@@ -1199,9 +1542,10 @@ async function runPipeline(
   claude: Anthropic,
   claudeModel: string,
 ): Promise<void> {
-  const totalSteps = 4;
+  const totalSteps = session.sendEmail ? 5 : 4;
   const selectedArticles = session.selectedArticles!;
-  const keyword = session.keyword;
+  const keywords = session.keywords;
+  const keywordStr = keywords.join(", ");
 
   try {
     // Subscribe to the global logger so we capture module-level logs
@@ -1258,7 +1602,7 @@ async function runPipeline(
       );
       const executiveSummary = await generateExecutiveSummary(
         rankedArticles,
-        keyword,
+        keywordStr,
         claude,
         claudeModel,
       );
@@ -1268,11 +1612,12 @@ async function runPipeline(
 
       const outputDir = ensureOutputDir();
       const dateStr = getDateStr();
-      const outputFilename = `뉴스클리핑_${keyword}_${dateStr}.docx`;
+      const filenameKeyword = keywords[0] + (keywords.length > 1 ? `_외${keywords.length - 1}건` : "");
+      const outputFilename = `뉴스클리핑_${filenameKeyword}_${dateStr}.docx`;
       const outputPath = path.join(outputDir, outputFilename);
 
       const config: ClipperConfig = {
-        keyword,
+        keyword: keywordStr,
         days: session.days,
         outputPath,
         claudeModel,
@@ -1288,12 +1633,26 @@ async function runPipeline(
 
       await generateDocx(report);
 
+      // Step 5: Email (optional)
+      let emailSent = false;
+      if (session.sendEmail) {
+        sessionProgress(session, 5, totalSteps, "메일 발송 중...");
+        try {
+          await sendEmailWithAttachment(outputPath, keywords);
+          emailSent = true;
+          sessionLog(session, "info", "메일 발송 완료!");
+        } catch (err) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          sessionLog(session, "error", `메일 발송 실패: ${errMsg}`);
+        }
+      }
+
       // Done
       session.status = "done";
       session.outputPath = outputPath;
 
       sessionLog(session, "info", `리포트 생성 완료: ${outputFilename}`);
-      broadcastSSE(session, { type: "done", filename: outputFilename });
+      broadcastSSE(session, { type: "done", filename: outputFilename, emailSent });
     } finally {
       unsubscribe();
     }

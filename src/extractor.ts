@@ -7,21 +7,62 @@ import type { ArticleDetail, SearchArticle } from "./types.js";
 // Issue 13: cheerio를 한 번만 파싱하여 재사용
 function parseHtml(html: string): CheerioAPI {
   const $ = cheerio.load(html);
-  $("script, style, nav, header, footer, iframe, .ad, .advertisement, #comment, .comment").remove();
+  $("script, style, nav, header, footer, iframe, .ad, .advertisement, #comment, .comment, .reply, .sns, .copyright, .relation_lst, .byline").remove();
   return $;
 }
 
-function extractTextFromParsed($: CheerioAPI): string {
-  // 네이버 뉴스 본문 우선 추출 시도
-  const naverArticle = $("#dic_area, #newsct_article, #articeBody, #articleBodyContents").first();
-  if (naverArticle.length > 0) {
-    return naverArticle.text().replace(/\s+/g, " ").trim();
-  }
+/** HTML → 문단 구분 유지하면서 텍스트 추출 */
+function htmlToText(el: ReturnType<CheerioAPI>): string {
+  const html = el.html() || "";
+  return html
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(p|div|h[1-6]|li|blockquote|tr)>/gi, "\n\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#039;/g, "'")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n[ \t]+/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
 
-  // 일반적인 기사 본문 영역 시도
-  const articleBody = $("article, .article-body, .article_body, .news_end, #article-body").first();
-  if (articleBody.length > 0) {
-    return articleBody.text().replace(/\s+/g, " ").trim();
+// 본문 추출용 CSS 셀렉터 (우선순위 순)
+const CONTENT_SELECTORS = [
+  // 네이버 뉴스
+  "#dic_area", "#newsct_article", "#articeBody", "#articleBodyContents",
+  // 주요 한국 뉴스 사이트
+  "#article_body", "#articleBody", "#article-body", "#article-view-content-div",
+  ".article_txt", ".article_text", "#article_text", ".article_content", "#article_content",
+  "#newsContent", "#news_content", "#news_body_area", "#news_body",
+  ".news_view", "#newsViewArea", ".news_article", "#news_article",
+  ".view_con", ".view_cont", ".view_article", ".viewConts", "#viewContent",
+  ".article-view", ".article_view", ".article-body", ".article_body",
+  // skyedaily 등 중소 매체
+  ".article_view_content", ".view_content", "#view_content",
+  "#CmAdContent", "#textBody", "#newsEndContents",
+  ".news_cont", ".news_text", ".news_detail",
+  ".cont_view", "#cont_view", ".view_txt",
+  "#news_contents", ".news_contents",
+  // 국제 표준
+  "[itemprop='articleBody']", "[data-component='text-block']",
+  // 일반적 fallback
+  "article", "main .content", ".post-content", ".entry-content",
+  ".article-body", ".article_body", ".news_end", "#article-body",
+];
+
+function extractTextFromParsed($: CheerioAPI): string {
+  for (const sel of CONTENT_SELECTORS) {
+    const el = $(sel).first();
+    if (el.length > 0) {
+      const text = htmlToText(el);
+      if (text.length > 50) {
+        return text;
+      }
+    }
   }
 
   // 전체 body 텍스트 (최후의 수단)
@@ -32,20 +73,43 @@ function extractMetaFromParsed($: CheerioAPI): { title?: string; date?: string; 
   const meta: { title?: string; date?: string; press?: string } = {};
 
   meta.title =
-    $(".media_end_head_headline, #title_area, .article_header h1, h1.headline").first().text().trim() ||
+    $(".media_end_head_headline, #title_area, .article_header h1, h1.headline, .view_tit, .article_tit h1").first().text().trim() ||
     $('meta[property="og:title"]').attr("content") ||
     $("title").text().trim();
 
-  const dateEl = $(".media_end_head_info_datestamp_time, .article_info .date, time, .author em");
+  const dateEl = $(".media_end_head_info_datestamp_time, .article_info .date, time, .author em, .view_date, .article_date");
   meta.date = dateEl.attr("data-date-time") || dateEl.first().text().trim();
 
   meta.press =
     $(".media_end_head_top_logo img").attr("alt") ||
     $('meta[property="og:article:author"]').attr("content") ||
     $('meta[name="twitter:creator"]').attr("content") ||
+    $('meta[property="og:site_name"]').attr("content") ||
     "";
 
   return meta;
+}
+
+/** URL을 모바일↔데스크톱으로 변환 시도 */
+function getAlternateUrl(url: string): string | null {
+  try {
+    const u = new URL(url);
+    if (u.hostname.startsWith("m.")) {
+      // 모바일 → 데스크톱
+      u.hostname = u.hostname.slice(2);
+      return u.toString();
+    } else if (u.hostname.startsWith("www.")) {
+      // www → 모바일
+      u.hostname = "m." + u.hostname.slice(4);
+      return u.toString();
+    } else {
+      // 기본 → 모바일 시도
+      u.hostname = "m." + u.hostname;
+      return u.toString();
+    }
+  } catch {
+    return null;
+  }
 }
 
 export async function extractArticleDetail(
@@ -55,34 +119,40 @@ export async function extractArticleDetail(
 ): Promise<ArticleDetail> {
   const url = article.naverLink || article.originalLink;
 
-  let html: string;
-  try {
-    html = await fetchArticleHtml(url);
-  } catch (error) {
-    // 네이버 링크 실패 시 원본 링크 시도
-    if (article.naverLink && article.originalLink) {
-      try {
-        html = await fetchArticleHtml(article.originalLink);
-      } catch {
-        return {
-          title: article.title,
-          publishDate: article.date,
-          reporter: "알 수 없음",
-          press: article.press,
-          body: `[본문을 가져올 수 없습니다: ${url}]`,
-          link: url,
-        };
-      }
-    } else {
-      return {
-        title: article.title,
-        publishDate: article.date,
-        reporter: "알 수 없음",
-        press: article.press,
-        body: `[본문을 가져올 수 없습니다: ${url}]`,
-        link: url,
-      };
+  let html: string | null = null;
+  const urlsToTry = [url];
+
+  // 네이버 링크 실패 시 원본 링크 추가
+  if (article.naverLink && article.originalLink) {
+    urlsToTry.push(article.originalLink);
+  }
+
+  // 모바일↔데스크톱 대체 URL 추가
+  for (const u of [...urlsToTry]) {
+    const alt = getAlternateUrl(u);
+    if (alt && !urlsToTry.includes(alt)) {
+      urlsToTry.push(alt);
     }
+  }
+
+  for (const tryUrl of urlsToTry) {
+    try {
+      html = await fetchArticleHtml(tryUrl);
+      if (html && html.length > 500) break;
+    } catch {
+      html = null;
+    }
+  }
+
+  if (!html) {
+    return {
+      title: article.title,
+      publishDate: article.date,
+      reporter: "알 수 없음",
+      press: article.press,
+      body: `[본문을 가져올 수 없습니다: ${url}]`,
+      link: url,
+    };
   }
 
   // Issue 13: 한 번만 파싱
@@ -90,8 +160,22 @@ export async function extractArticleDetail(
   const textContent = extractTextFromParsed($);
   const meta = extractMetaFromParsed($);
 
-  // 텍스트가 너무 짧으면 메타데이터 기반으로 반환
+  // og:description을 fallback으로 사용
+  const ogDesc = $('meta[property="og:description"]').attr("content") || "";
+
+  // 텍스트가 너무 짧으면 og:description이나 메타데이터 기반으로 반환
   if (textContent.length < 50) {
+    if (ogDesc.length > 50) {
+      // og:description이라도 사용
+      return {
+        title: meta.title || article.title,
+        publishDate: meta.date || article.date,
+        reporter: "알 수 없음",
+        press: meta.press || article.press,
+        body: ogDesc,
+        link: url,
+      };
+    }
     return {
       title: meta.title || article.title,
       publishDate: meta.date || article.date,
@@ -122,7 +206,7 @@ export async function extractArticleDetail(
   "publishDate": "발행일 (YYYY-MM-DD 형식, 없으면 빈 문자열)",
   "reporter": "기자명 (없으면 빈 문자열)",
   "press": "언론사명",
-  "body": "기사 본문 전체 (광고, 관련기사, 저작권 문구 등은 제외하되, 기사 내용은 누락 없이 모두 포함)"
+  "body": "기사 본문 전체 (광고, 관련기사, 저작권 문구 등은 제외하되, 기사 내용은 누락 없이 모두 포함. 반드시 문단 구분을 \\n\\n으로 유지할 것. 의미 단위로 문단을 나눌 것.)"
 }
 
 웹페이지 텍스트:

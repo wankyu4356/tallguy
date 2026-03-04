@@ -5,7 +5,6 @@ import {
   TextRun,
   HeadingLevel,
   AlignmentType,
-  BorderStyle,
   ExternalHyperlink,
   PageBreak,
 } from "docx";
@@ -81,16 +80,6 @@ function createTitlePage(report: ClipperReport): Paragraph[] {
   ];
 }
 
-function createSeparator(): Paragraph {
-  return new Paragraph({
-    spacing: { before: 200, after: 200 },
-    border: {
-      bottom: { style: BorderStyle.SINGLE, size: 1, color: "CCCCCC" },
-    },
-    children: [],
-  });
-}
-
 function createExecutiveSummary(bullets: string[]): Paragraph[] {
   const paragraphs: Paragraph[] = [
     new Paragraph({
@@ -132,33 +121,21 @@ function createExecutiveSummary(bullets: string[]): Paragraph[] {
 }
 
 function createArticleSection(report: ClipperReport): Paragraph[] {
-  const paragraphs: Paragraph[] = [
-    new Paragraph({
-      children: [new PageBreak()],
-    }),
-    new Paragraph({
-      heading: HeadingLevel.HEADING_1,
-      spacing: { after: 400 },
-      children: [
-        new TextRun({
-          text: "기사 상세",
-          bold: true,
-          size: 36,
-          font: "맑은 고딕",
-          color: "1B3A5C",
-        }),
-      ],
-    }),
-  ];
+  const paragraphs: Paragraph[] = [];
 
   for (let i = 0; i < report.articles.length; i++) {
     const article = report.articles[i];
+
+    // 기사 시작 전 항상 페이지 나눔
+    paragraphs.push(
+      new Paragraph({ children: [new PageBreak()] }),
+    );
 
     // 기사 번호 및 제목
     paragraphs.push(
       new Paragraph({
         heading: HeadingLevel.HEADING_2,
-        spacing: { before: 400, after: 100 },
+        spacing: { after: 100 },
         children: [
           new TextRun({
             text: `${i + 1}. ${article.title}`,
@@ -211,7 +188,7 @@ function createArticleSection(report: ClipperReport): Paragraph[] {
     // 링크
     paragraphs.push(
       new Paragraph({
-        spacing: { after: 150 },
+        spacing: { after: 200 },
         children: [
           new TextRun({ text: "원문: ", bold: true, size: 20, font: "맑은 고딕", color: "666666" }),
           new ExternalHyperlink({
@@ -230,26 +207,30 @@ function createArticleSection(report: ClipperReport): Paragraph[] {
       }),
     );
 
-    // 본문
-    const bodyParagraphs = article.body.split("\n").filter((line) => line.trim());
+    // 본문 — 문단 나누기 + 가독성 향상
+    const bodyParagraphs = article.body.split(/\n\n+/).filter((p) => p.trim());
     for (const bodyPara of bodyParagraphs) {
+      // 문단 내 줄바꿈 처리
+      const lines = bodyPara.split("\n").filter((l) => l.trim());
+      const runs: TextRun[] = [];
+      for (let j = 0; j < lines.length; j++) {
+        if (j > 0) {
+          runs.push(new TextRun({ text: "", break: 1 }));
+        }
+        runs.push(new TextRun({
+          text: lines[j].trim(),
+          size: 21,
+          font: "맑은 고딕",
+        }));
+      }
+
       paragraphs.push(
         new Paragraph({
-          spacing: { after: 80 },
-          children: [
-            new TextRun({
-              text: bodyPara.trim(),
-              size: 21,
-              font: "맑은 고딕",
-            }),
-          ],
+          spacing: { after: 160, line: 360 },
+          indent: { firstLine: 200 },
+          children: runs,
         }),
       );
-    }
-
-    // 구분선 (마지막 기사 제외)
-    if (i < report.articles.length - 1) {
-      paragraphs.push(createSeparator());
     }
   }
 
