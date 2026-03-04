@@ -44,7 +44,7 @@ function buildSearchUrl(keyword: string, startDate: Date, endDate: Date, page: n
 
   const params = new URLSearchParams({
     where: "news",
-    query: `"${keyword}"`,
+    query: keyword,
     sort: "1",
     pd: "3",
     ds: ds.dot,
@@ -253,7 +253,7 @@ async function searchViaNaverApi(keyword: string, days: number): Promise<SearchA
         "https://openapi.naver.com/v1/search/news.json",
         {
           params: {
-            query: `"${keyword}"`,
+            query: keyword,
             display: displaySize,
             start,
             sort: "date",
@@ -338,22 +338,23 @@ export async function scrapeNaverNews(
     return searchViaScraping(keyword, days);
   }
 
-  // auto: 스크래핑 시도 → 0건이면 API 폴백
-  logger.info("[자동 모드] 웹 스크래핑으로 먼저 시도합니다.");
-  const scrapingResults = await searchViaScraping(keyword, days);
+  // auto: API 키가 있으면 API 우선, 없으면 스크래핑
+  const hasApiKeys = !!(process.env.NAVER_CLIENT_ID && process.env.NAVER_CLIENT_SECRET);
 
-  if (scrapingResults.length > 0) {
-    return scrapingResults;
-  }
-
-  const hasApiKeys = process.env.NAVER_CLIENT_ID && process.env.NAVER_CLIENT_SECRET;
   if (hasApiKeys) {
-    logger.warn("웹 스크래핑 결과가 0건입니다. 네이버 API로 폴백합니다.");
-    return searchViaNaverApi(keyword, days);
+    logger.info("[자동 모드] 네이버 API로 먼저 시도합니다.");
+    const apiResults = await searchViaNaverApi(keyword, days);
+
+    if (apiResults.length > 0) {
+      return apiResults;
+    }
+
+    logger.warn("네이버 API 결과가 0건입니다. 웹 스크래핑으로 폴백합니다.");
+    return searchViaScraping(keyword, days);
   }
 
-  logger.warn("웹 스크래핑 결과가 0건이고 네이버 API 키가 없어 폴백할 수 없습니다.");
-  return [];
+  logger.info("[자동 모드] 네이버 API 키가 없어 웹 스크래핑으로 시도합니다.");
+  return searchViaScraping(keyword, days);
 }
 
 export async function fetchArticleHtml(url: string): Promise<string> {
