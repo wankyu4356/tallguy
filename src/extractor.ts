@@ -98,8 +98,20 @@ function extractTextFromParsed($: CheerioAPI, url?: string): string {
   return $("body").text().replace(/\s+/g, " ").trim();
 }
 
-function extractMetaFromParsed($: CheerioAPI): { title?: string; date?: string; press?: string } {
-  const meta: { title?: string; date?: string; press?: string } = {};
+function extractMetaFromParsed($: CheerioAPI, url?: string): { title?: string; date?: string; press?: string; reporter?: string } {
+  const meta: { title?: string; date?: string; press?: string; reporter?: string } = {};
+
+  // 더벨 전용 메타 추출
+  if (url && url.includes("thebell.co.kr")) {
+    meta.title =
+      $(".viewHead .tit").first().contents().first().text().trim() ||
+      $('meta[property="og:title"]').attr("content") ||
+      $("title").text().trim();
+    meta.date = $(".viewHead .userBox .date").first().text().trim();
+    meta.press = "더벨";
+    meta.reporter = $(".viewHead .userBox .user").first().text().trim();
+    return meta;
+  }
 
   meta.title =
     $(".media_end_head_headline, #title_area, .article_header h1, h1.headline, .view_tit, .article_tit h1").first().text().trim() ||
@@ -192,7 +204,7 @@ export async function extractArticleDetail(
   // Issue 13: 한 번만 파싱
   const $ = parseHtml(html);
   const textContent = extractTextFromParsed($, url);
-  const meta = extractMetaFromParsed($);
+  const meta = extractMetaFromParsed($, url);
 
   // og:description을 fallback으로 사용
   const ogDesc = $('meta[property="og:description"]').attr("content") || "";
@@ -204,7 +216,7 @@ export async function extractArticleDetail(
       return {
         title: meta.title || article.title,
         publishDate: meta.date || article.date,
-        reporter: "알 수 없음",
+        reporter: meta.reporter || "알 수 없음",
         press: meta.press || article.press,
         body: ogDesc,
         link: url,
@@ -217,7 +229,7 @@ export async function extractArticleDetail(
     return {
       title: meta.title || article.title,
       publishDate: meta.date || article.date,
-      reporter: "알 수 없음",
+      reporter: meta.reporter || "알 수 없음",
       press: meta.press || article.press,
       body: summaryFallback,
       link: url,
@@ -270,7 +282,7 @@ ${truncatedText}`,
     return {
       title: parsed.title || meta.title || article.title,
       publishDate: parsed.publishDate || meta.date || article.date,
-      reporter: parsed.reporter || "알 수 없음",
+      reporter: parsed.reporter || meta.reporter || "알 수 없음",
       press: parsed.press || meta.press || article.press,
       body: parsed.body || textContent,
       link: url,
@@ -280,7 +292,7 @@ ${truncatedText}`,
     return {
       title: meta.title || article.title,
       publishDate: meta.date || article.date,
-      reporter: "알 수 없음",
+      reporter: meta.reporter || "알 수 없음",
       press: meta.press || article.press,
       body: textContent.slice(0, 5000),
       link: url,

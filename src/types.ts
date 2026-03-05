@@ -34,4 +34,5 @@ export interface ClipperReport {
   executiveSummary: string[];
   articles: RankedArticle[];
   generatedAt: string;
+  analysisPrompt?: string;
 }

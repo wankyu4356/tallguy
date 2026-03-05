@@ -2003,6 +2003,7 @@ async function runPipeline(
         executiveSummary,
         articles: rankedArticles,
         generatedAt: new Date().toISOString(),
+        analysisPrompt: session.analysisPrompt || "",
       };
 
       await generateDocx(report);

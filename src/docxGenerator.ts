@@ -122,6 +122,9 @@ function createExecutiveSummary(bullets: string[]): Paragraph[] {
 
 function createArticleSection(report: ClipperReport): Paragraph[] {
   const paragraphs: Paragraph[] = [];
+  const importanceLabel = report.analysisPrompt
+    ? "중요도"
+    : "중요도";
 
   for (let i = 0; i < report.articles.length; i++) {
     const article = report.articles[i];
@@ -169,7 +172,7 @@ function createArticleSection(report: ClipperReport): Paragraph[] {
         spacing: { after: 60 },
         children: [
           new TextRun({
-            text: `M&A 중요도: ${article.importance}위`,
+            text: `${importanceLabel}: ${article.importance}위`,
             bold: true,
             size: 20,
             font: "맑은 고딕",
