@@ -879,9 +879,10 @@ function buildPageHtml(): string {
       var includes = [];
       var excludes = [];
       parts.forEach(function(p) {
-        var m = p.match(/^\((.+)\)$/);
-        if (m) {
-          excludes.push(m[1].trim());
+        // 반각 괄호 () 또는 전각 괄호 （） 모두 지원
+        if ((p.charAt(0) === '(' && p.charAt(p.length - 1) === ')') ||
+            (p.charAt(0) === '\uFF08' && p.charAt(p.length - 1) === '\uFF09')) {
+          excludes.push(p.slice(1, -1).trim());
         } else {
           includes.push(p);
         }
@@ -906,6 +907,13 @@ function buildPageHtml(): string {
       renderKeywordChips();
     }
 
+    function makeKwTag(text, isExclude) {
+      if (isExclude) {
+        return '<span style="background:#ffcdd2;color:#c62828;padding:1px 6px;border-radius:10px;font-size:12px;font-weight:600;text-decoration:line-through;display:inline-block;">' + escapeHtml(text) + '</span>';
+      }
+      return '<span style="background:#c8e6c9;color:#1b5e20;padding:1px 6px;border-radius:10px;font-size:12px;font-weight:600;display:inline-block;">' + escapeHtml(text) + '</span>';
+    }
+
     function renderKeywordChips() {
       var container = document.getElementById('keywordChips');
       container.innerHTML = '';
@@ -914,10 +922,10 @@ function buildPageHtml(): string {
         chip.className = 'keyword-chip';
         var termsHtml = '';
         entry.includes.forEach(function(t) {
-          termsHtml += '<span class="kw-include">' + escapeHtml(t) + '</span> ';
+          termsHtml += makeKwTag(t, false) + ' ';
         });
         entry.excludes.forEach(function(t) {
-          termsHtml += '<span class="kw-exclude">' + escapeHtml(t) + '</span> ';
+          termsHtml += makeKwTag(t, true) + ' ';
         });
         chip.innerHTML = '<span class="kw-term">' + termsHtml + '</span>' +
           '<span class="kw-remove" onclick="removeKeyword(' + idx + ')">&times;</span>';
@@ -1105,10 +1113,10 @@ function buildPageHtml(): string {
         var parsed = parseKeywordInput(kw);
         var kwTagsHtml = '';
         parsed.includes.forEach(function(t) {
-          kwTagsHtml += '<span class="kw-include">' + escapeHtml(t) + '</span> ';
+          kwTagsHtml += makeKwTag(t, false) + ' ';
         });
         parsed.excludes.forEach(function(t) {
-          kwTagsHtml += '<span class="kw-exclude">' + escapeHtml(t) + '</span> ';
+          kwTagsHtml += makeKwTag(t, true) + ' ';
         });
 
         // Header
@@ -1158,10 +1166,10 @@ function buildPageHtml(): string {
           // 키워드 컬럼용 태그
           var cellKwHtml = '';
           parsed.includes.forEach(function(t) {
-            cellKwHtml += '<span class="kw-include" style="font-size:11px;">' + escapeHtml(t) + '</span> ';
+            cellKwHtml += makeKwTag(t, false) + ' ';
           });
           parsed.excludes.forEach(function(t) {
-            cellKwHtml += '<span class="kw-exclude" style="font-size:11px;">' + escapeHtml(t) + '</span> ';
+            cellKwHtml += makeKwTag(t, true) + ' ';
           });
 
           tr.innerHTML =
