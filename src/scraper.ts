@@ -626,18 +626,31 @@ async function findChromiumPath(): Promise<string | undefined> {
   const fs = await import("fs");
   const os = await import("os");
   const path = await import("path");
+  const platform = os.platform();
 
   // 1) ms-playwright 캐시에서 찾기
-  const homeDirs = [os.homedir(), "/root"];
-  for (const home of homeDirs) {
-    const msDir = path.join(home, ".cache", "ms-playwright");
+  const cacheDirs: string[] = [];
+  if (platform === "win32") {
+    // Windows: %LOCALAPPDATA%\ms-playwright
+    const localAppData = process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local");
+    cacheDirs.push(path.join(localAppData, "ms-playwright"));
+  }
+  cacheDirs.push(path.join(os.homedir(), ".cache", "ms-playwright"));
+  if (platform !== "win32") cacheDirs.push("/root/.cache/ms-playwright");
+
+  for (const msDir of cacheDirs) {
     if (fs.existsSync(msDir)) {
       const dirs = fs.readdirSync(msDir)
         .filter((d: string) => d.startsWith("chromium-"))
         .sort()
         .reverse();
       for (const d of dirs) {
-        for (const bin of ["chrome-linux/chrome", "chrome-win/chrome.exe", "chrome-mac/Chromium.app/Contents/MacOS/Chromium"]) {
+        const bins = platform === "win32"
+          ? ["chrome-win/chrome.exe"]
+          : platform === "darwin"
+            ? ["chrome-mac/Chromium.app/Contents/MacOS/Chromium"]
+            : ["chrome-linux/chrome"];
+        for (const bin of bins) {
           const p = path.join(msDir, d, bin);
           if (fs.existsSync(p)) return p;
         }
@@ -646,13 +659,16 @@ async function findChromiumPath(): Promise<string | undefined> {
   }
 
   // 2) 시스템 설치된 Chrome/Chromium
-  const systemPaths = [
-    "/usr/bin/chromium-browser",
-    "/usr/bin/chromium",
-    "/usr/bin/google-chrome-stable",
-    "/usr/bin/google-chrome",
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-  ];
+  const systemPaths = platform === "win32"
+    ? [
+        path.join(process.env.PROGRAMFILES || "C:\\Program Files", "Google", "Chrome", "Application", "chrome.exe"),
+        path.join(process.env["PROGRAMFILES(X86)"] || "C:\\Program Files (x86)", "Google", "Chrome", "Application", "chrome.exe"),
+        path.join(os.homedir(), "AppData", "Local", "Google", "Chrome", "Application", "chrome.exe"),
+      ]
+    : platform === "darwin"
+      ? ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"]
+      : ["/usr/bin/chromium-browser", "/usr/bin/chromium", "/usr/bin/google-chrome-stable", "/usr/bin/google-chrome"];
+
   for (const p of systemPaths) {
     if (fs.existsSync(p)) return p;
   }
@@ -715,7 +731,13 @@ async function fetchThebellHtml(url: string): Promise<string | null> {
     }
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
-    logger.warn(`[더벨] Playwright fetch 실패: ${errMsg}`);
+    if (errMsg.includes("Cannot find package") || errMsg.includes("MODULE_NOT_FOUND")) {
+      logger.warn(`[더벨] playwright-core 패키지가 설치되지 않았습니다. 더벨 기사 본문을 가져오려면:\n   npm install playwright-core\n   npx playwright install chromium`);
+    } else if (errMsg.includes("Executable doesn't exist")) {
+      logger.warn(`[더벨] Chromium이 설치되지 않았습니다. 다음 명령어를 실행하세요:\n   npx playwright install chromium`);
+    } else {
+      logger.warn(`[더벨] Playwright fetch 실패: ${errMsg}`);
+    }
     return null;
   }
 }
