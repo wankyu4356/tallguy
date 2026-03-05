@@ -214,13 +214,14 @@ export async function extractArticleDetail(
     const fallbackBody = article.summary && article.summary.length > 20
       ? article.summary
       : `[본문을 가져올 수 없습니다: ${url}]`;
+    const isThebell = url.includes("thebell.co.kr") || article.originalLink.includes("thebell.co.kr");
     return {
       title: article.title,
       publishDate: article.date,
       reporter: "알 수 없음",
-      press: article.press,
+      press: isThebell ? "더벨" : (article.press || "알 수 없음"),
       body: fallbackBody,
-      link: url,
+      link: article.originalLink || url,
     };
   }
 
