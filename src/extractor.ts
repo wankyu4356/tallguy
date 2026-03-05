@@ -59,7 +59,31 @@ const CONTENT_SELECTORS = [
   ".article-body", ".article_body", ".news_end", "#article-body",
 ];
 
-function extractTextFromParsed($: CheerioAPI): string {
+/** 더벨(thebell) 전용 본문 추출 */
+function extractThebellContent($: CheerioAPI): string | null {
+  const el = $("#article_main, .viewSection").first();
+  if (el.length === 0) return null;
+
+  // 더벨 본문 안의 불필요한 요소 제거
+  el.find(".article_content_banner, .article_title_banner, .tip, .reference, .linkBox, .newsADBox, .newsADBox, .linkNews, .optionIcon, .viewHead, .headBox, .userBox, .groupBox, script, style, iframe").remove();
+
+  const text = htmlToText(el);
+  if (text.length > 100) return text;
+
+  // 페이월인 경우 og:description 사용
+  const ogDesc = $('meta[property="og:description"]').attr("content") || "";
+  if (ogDesc.length > 30) return ogDesc;
+
+  return null;
+}
+
+function extractTextFromParsed($: CheerioAPI, url?: string): string {
+  // 더벨 전용 처리
+  if (url && url.includes("thebell.co.kr")) {
+    const thebellText = extractThebellContent($);
+    if (thebellText) return thebellText;
+  }
+
   for (const sel of CONTENT_SELECTORS) {
     const el = $(sel).first();
     if (el.length > 0) {
@@ -167,7 +191,7 @@ export async function extractArticleDetail(
 
   // Issue 13: 한 번만 파싱
   const $ = parseHtml(html);
-  const textContent = extractTextFromParsed($);
+  const textContent = extractTextFromParsed($, url);
   const meta = extractMetaFromParsed($);
 
   // og:description을 fallback으로 사용
