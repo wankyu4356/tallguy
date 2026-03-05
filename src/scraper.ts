@@ -621,22 +621,21 @@ export async function scrapeNaverNews(
   return searchViaScraping(keyword, days);
 }
 
-/** 더벨(thebell) 전용 fetch — 세션 쿠키 획득 후 기사 가져오기 */
+/** 더벨(thebell) 전용 fetch — 여러 방법으로 기사 가져오기 시도 */
 async function fetchThebellHtml(url: string): Promise<string | null> {
+  // 방법 1: 직접 fetch (세션 쿠키 포함)
   try {
-    // 1단계: 홈페이지에서 세션 쿠키 획득
     const homeResponse = await axios.get("https://www.thebell.co.kr/", {
       headers: {
         "User-Agent": USER_AGENT,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
       },
-      timeout: 15000,
+      timeout: 10000,
       maxRedirects: 5,
       validateStatus: (status) => status < 500,
     });
 
-    // Set-Cookie 헤더에서 쿠키 추출
     const setCookies = homeResponse.headers["set-cookie"];
     let cookieStr = "";
     if (setCookies) {
@@ -647,43 +646,20 @@ async function fetchThebellHtml(url: string): Promise<string | null> {
 
     logger.info(`[더벨] 세션 쿠키 획득: ${cookieStr ? "성공" : "없음"}`);
 
-    // 2단계: 쿠키를 포함하여 기사 fetch
-    const articleResponse = await axios.get(url, {
-      headers: {
-        "User-Agent": USER_AGENT,
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
-        "Referer": "https://www.thebell.co.kr/",
-        "Cookie": cookieStr,
-        "Cache-Control": "no-cache",
-      },
-      timeout: 15000,
-      responseType: "text",
-      maxRedirects: 5,
-      validateStatus: (status) => status < 500,
-    });
-
-    if (articleResponse.status === 200 && articleResponse.data && articleResponse.data.length > 500) {
-      logger.info(`[더벨] 기사 fetch 성공 (${articleResponse.data.length}바이트)`);
-      return articleResponse.data;
-    }
-
-    logger.warn(`[더벨] 기사 fetch 실패: HTTP ${articleResponse.status}, 길이: ${articleResponse.data?.length || 0}`);
-
-    // 3단계: free 기사 URL 변형 시도
-    // /free/content/ → /free/Content/ 등 대소문자 변형
-    const altUrls = [
-      url.replace("/free/content/", "/free/Content/"),
+    // 직접 + 모바일 + 대소문자 변형
+    const urlsToTry = [
+      url,
       url.replace("www.thebell.co.kr", "m.thebell.co.kr"),
+      url.replace("/free/content/", "/free/Content/"),
     ];
 
-    for (const altUrl of altUrls) {
+    for (const tryUrl of urlsToTry) {
       try {
-        const altResponse = await axios.get(altUrl, {
+        const resp = await axios.get(tryUrl, {
           headers: {
-            "User-Agent": MOBILE_USER_AGENT,
+            "User-Agent": tryUrl.includes("m.thebell") ? MOBILE_USER_AGENT : USER_AGENT,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "ko-KR,ko;q=0.9",
+            "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
             "Referer": "https://www.thebell.co.kr/",
             "Cookie": cookieStr,
           },
@@ -693,21 +669,94 @@ async function fetchThebellHtml(url: string): Promise<string | null> {
           validateStatus: (status) => status < 500,
         });
 
-        if (altResponse.status === 200 && altResponse.data && altResponse.data.length > 500) {
-          logger.info(`[더벨] 대체 URL fetch 성공: ${altUrl} (${altResponse.data.length}바이트)`);
-          return altResponse.data;
+        if (resp.status === 200 && resp.data && resp.data.length > 500) {
+          logger.info(`[더벨] 직접 fetch 성공: ${tryUrl} (${resp.data.length}바이트)`);
+          return resp.data;
         }
-      } catch {
-        // 다음 URL 시도
+        logger.info(`[더벨] ${tryUrl} → HTTP ${resp.status}, ${resp.data?.length || 0}바이트`);
+      } catch (e) {
+        logger.info(`[더벨] ${tryUrl} → 오류: ${e instanceof Error ? e.message : e}`);
       }
     }
-
-    return null;
-  } catch (error) {
-    const errMsg = error instanceof Error ? error.message : String(error);
-    logger.warn(`[더벨] fetch 실패: ${errMsg}`);
-    return null;
+  } catch (e) {
+    logger.info(`[더벨] 홈페이지 접속 실패: ${e instanceof Error ? e.message : e}`);
   }
+
+  // 방법 2: Google 웹 캐시
+  try {
+    const cacheUrl = `https://webcache.googleusercontent.com/search?q=cache:${encodeURIComponent(url)}&hl=ko`;
+    const resp = await axios.get(cacheUrl, {
+      headers: {
+        "User-Agent": USER_AGENT,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "ko-KR,ko;q=0.9",
+      },
+      timeout: 15000,
+      responseType: "text",
+      maxRedirects: 5,
+      validateStatus: (status) => status < 500,
+    });
+
+    if (resp.status === 200 && resp.data && resp.data.length > 500) {
+      logger.info(`[더벨] Google 캐시 fetch 성공 (${resp.data.length}바이트)`);
+      return resp.data;
+    }
+    logger.info(`[더벨] Google 캐시 → HTTP ${resp.status}`);
+  } catch (e) {
+    logger.info(`[더벨] Google 캐시 실패: ${e instanceof Error ? e.message : e}`);
+  }
+
+  // 방법 3: 네이버 캐시 (네이버 뉴스 검색에서 캐시된 버전)
+  try {
+    // thebell 기사의 key 추출
+    const keyMatch = url.match(/key=([^&]+)/);
+    if (keyMatch) {
+      const searchUrl = `https://search.naver.com/search.naver?where=news&query=${encodeURIComponent("thebell " + keyMatch[1])}`;
+      const resp = await axios.get(searchUrl, {
+        headers: {
+          "User-Agent": USER_AGENT,
+          "Accept-Language": "ko-KR,ko;q=0.9",
+        },
+        timeout: 15000,
+        responseType: "text",
+      });
+
+      if (resp.data) {
+        const $ = cheerio.load(resp.data);
+        // 네이버 검색 결과에서 네이버 뉴스 링크 찾기
+        let naverNewsUrl: string | null = null;
+        $("a").each((_, el) => {
+          const href = $(el).attr("href") || "";
+          if (href.includes("news.naver.com") && !naverNewsUrl) {
+            naverNewsUrl = href;
+          }
+        });
+
+        if (naverNewsUrl) {
+          logger.info(`[더벨] 네이버 뉴스 링크 발견: ${naverNewsUrl}`);
+          const naverResp = await axios.get(naverNewsUrl, {
+            headers: {
+              "User-Agent": USER_AGENT,
+              "Accept-Language": "ko-KR,ko;q=0.9",
+            },
+            timeout: 15000,
+            responseType: "text",
+            maxRedirects: 5,
+          });
+
+          if (naverResp.data && naverResp.data.length > 500) {
+            logger.info(`[더벨] 네이버 뉴스 fetch 성공 (${naverResp.data.length}바이트)`);
+            return naverResp.data;
+          }
+        }
+      }
+    }
+  } catch (e) {
+    logger.info(`[더벨] 네이버 캐시 검색 실패: ${e instanceof Error ? e.message : e}`);
+  }
+
+  logger.warn(`[더벨] 모든 방법 실패 — 기사 본문을 가져올 수 없습니다`);
+  return null;
 }
 
 export async function fetchArticleHtml(url: string): Promise<string> {

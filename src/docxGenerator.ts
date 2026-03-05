@@ -152,17 +152,22 @@ function createArticleSection(report: ClipperReport): Paragraph[] {
     );
 
     // 메타 정보
+    const metaChildren = [
+      new TextRun({ text: "언론사: ", bold: true, size: 20, font: "맑은 고딕", color: "666666" }),
+      new TextRun({ text: article.press, size: 20, font: "맑은 고딕" }),
+      new TextRun({ text: "  |  발행일: ", bold: true, size: 20, font: "맑은 고딕", color: "666666" }),
+      new TextRun({ text: article.publishDate, size: 20, font: "맑은 고딕" }),
+    ];
+    if (article.reporter && article.reporter !== "알 수 없음") {
+      metaChildren.push(
+        new TextRun({ text: "  |  기자: ", bold: true, size: 20, font: "맑은 고딕", color: "666666" }),
+        new TextRun({ text: article.reporter, size: 20, font: "맑은 고딕" }),
+      );
+    }
     paragraphs.push(
       new Paragraph({
         spacing: { after: 60 },
-        children: [
-          new TextRun({ text: "언론사: ", bold: true, size: 20, font: "맑은 고딕", color: "666666" }),
-          new TextRun({ text: article.press, size: 20, font: "맑은 고딕" }),
-          new TextRun({ text: "  |  발행일: ", bold: true, size: 20, font: "맑은 고딕", color: "666666" }),
-          new TextRun({ text: article.publishDate, size: 20, font: "맑은 고딕" }),
-          new TextRun({ text: "  |  기자: ", bold: true, size: 20, font: "맑은 고딕", color: "666666" }),
-          new TextRun({ text: article.reporter, size: 20, font: "맑은 고딕" }),
-        ],
+        children: metaChildren,
       }),
     );
 
