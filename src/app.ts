@@ -288,15 +288,17 @@ function buildPageHtml(): string {
       align-items: center;
       gap: 2px;
     }
-    .keyword-chip .kw-include {
+    .kw-include {
       background: #c8e6c9;
       color: #1b5e20;
       padding: 1px 6px;
       border-radius: 10px;
       font-size: 12px;
       font-weight: 600;
+      text-decoration: none;
+      display: inline-block;
     }
-    .keyword-chip .kw-exclude {
+    .kw-exclude {
       background: #ffcdd2;
       color: #c62828;
       padding: 1px 6px;
@@ -304,6 +306,7 @@ function buildPageHtml(): string {
       font-size: 12px;
       font-weight: 600;
       text-decoration: line-through;
+      display: inline-block;
     }
     .keyword-chip .kw-remove {
       cursor: pointer;
