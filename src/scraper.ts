@@ -670,10 +670,24 @@ async function fetchThebellHtml(url: string): Promise<string | null> {
         });
 
         if (resp.status === 200 && resp.data && resp.data.length > 500) {
-          logger.info(`[더벨] 직접 fetch 성공: ${tryUrl} (${resp.data.length}바이트)`);
-          return resp.data;
+          // 980바이트 등 작은 HTML은 로그인/리다이렉트 페이지일 가능성 높음
+          const html = resp.data as string;
+          const hasArticleContent = html.length > 2000 ||
+            html.includes("article_main") ||
+            html.includes("viewSection") ||
+            html.includes("articleBody") ||
+            html.includes("og:description");
+
+          if (hasArticleContent) {
+            logger.info(`[더벨] 직접 fetch 성공: ${tryUrl} (${html.length}바이트)`);
+            return html;
+          }
+
+          // 작은 HTML 내용 디버그 로그
+          logger.warn(`[더벨] ${tryUrl} → ${html.length}바이트 (기사 본문 아님): ${html.slice(0, 300).replace(/\s+/g, " ")}`);
+        } else {
+          logger.info(`[더벨] ${tryUrl} → HTTP ${resp.status}, ${resp.data?.length || 0}바이트`);
         }
-        logger.info(`[더벨] ${tryUrl} → HTTP ${resp.status}, ${resp.data?.length || 0}바이트`);
       } catch (e) {
         logger.info(`[더벨] ${tryUrl} → 오류: ${e instanceof Error ? e.message : e}`);
       }
