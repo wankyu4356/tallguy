@@ -61,11 +61,27 @@ const CONTENT_SELECTORS = [
 
 /** 더벨(thebell) 전용 본문 추출 */
 function extractThebellContent($: CheerioAPI): string | null {
-  const el = $("#article_main, .viewSection").first();
+  // 더벨 본문 셀렉터 (우선순위 순)
+  const thebellSelectors = [
+    "#article_main",
+    ".viewSection",
+    "#CmAdContent",
+    ".articleView",
+    ".article_view",
+    "#articleBody",
+    ".articleCont",
+    "#viewContent",
+  ];
+
+  let el = $(thebellSelectors[0]).first();
+  for (const sel of thebellSelectors) {
+    const found = $(sel).first();
+    if (found.length > 0) { el = found; break; }
+  }
   if (el.length === 0) return null;
 
   // 더벨 본문 안의 불필요한 요소 제거
-  el.find(".article_content_banner, .article_title_banner, .tip, .reference, .linkBox, .newsADBox, .newsADBox, .linkNews, .optionIcon, .viewHead, .headBox, .userBox, .groupBox, script, style, iframe").remove();
+  el.find(".article_content_banner, .article_title_banner, .tip, .reference, .linkBox, .newsADBox, .linkNews, .optionIcon, .viewHead, .headBox, .userBox, .groupBox, script, style, iframe").remove();
 
   const text = htmlToText(el);
   if (text.length > 100) return text;
@@ -105,11 +121,18 @@ function extractMetaFromParsed($: CheerioAPI, url?: string): { title?: string; d
   if (url && url.includes("thebell.co.kr")) {
     meta.title =
       $(".viewHead .tit").first().contents().first().text().trim() ||
+      $(".viewHead h1, .viewHead .title").first().text().trim() ||
       $('meta[property="og:title"]').attr("content") ||
       $("title").text().trim();
-    meta.date = $(".viewHead .userBox .date").first().text().trim();
+    meta.date =
+      $(".viewHead .userBox .date").first().text().trim() ||
+      $(".viewHead .date, .viewHead time").first().text().trim() ||
+      $('meta[property="article:published_time"]').attr("content") || "";
     meta.press = "더벨";
-    meta.reporter = $(".viewHead .userBox .user").first().text().trim();
+    meta.reporter =
+      $(".viewHead .userBox .user").first().text().trim() ||
+      $(".viewHead .user, .viewHead .reporter, .viewHead .writer").first().text().trim() ||
+      $('meta[name="author"]').attr("content") || "";
     return meta;
   }
 
@@ -203,8 +226,9 @@ export async function extractArticleDetail(
 
   // Issue 13: 한 번만 파싱
   const $ = parseHtml(html);
-  const textContent = extractTextFromParsed($, url);
+  // 메타를 먼저 추출 (본문 추출 시 DOM 요소가 제거되므로)
   const meta = extractMetaFromParsed($, url);
+  const textContent = extractTextFromParsed($, url);
 
   // og:description을 fallback으로 사용
   const ogDesc = $('meta[property="og:description"]').attr("content") || "";
