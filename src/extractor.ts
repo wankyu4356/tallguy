@@ -224,10 +224,15 @@ export async function extractArticleDetail(
     };
   }
 
-  // Issue 13: 한 번만 파싱
+  // 더벨: 원본 HTML에서 메타를 먼저 추출 (parseHtml이 .byline 등을 제거하기 전)
+  const rawMeta = url.includes("thebell.co.kr")
+    ? extractMetaFromParsed(cheerio.load(html), url)
+    : null;
+
+  // Issue 13: 한 번만 파싱하여 재사용
   const $ = parseHtml(html);
   // 메타를 먼저 추출 (본문 추출 시 DOM 요소가 제거되므로)
-  const meta = extractMetaFromParsed($, url);
+  const meta = rawMeta || extractMetaFromParsed($, url);
   const textContent = extractTextFromParsed($, url);
 
   // og:description을 fallback으로 사용

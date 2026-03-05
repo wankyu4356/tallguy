@@ -621,7 +621,103 @@ export async function scrapeNaverNews(
   return searchViaScraping(keyword, days);
 }
 
+/** 더벨(thebell) 전용 fetch — 세션 쿠키 획득 후 기사 가져오기 */
+async function fetchThebellHtml(url: string): Promise<string | null> {
+  try {
+    // 1단계: 홈페이지에서 세션 쿠키 획득
+    const homeResponse = await axios.get("https://www.thebell.co.kr/", {
+      headers: {
+        "User-Agent": USER_AGENT,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+      },
+      timeout: 15000,
+      maxRedirects: 5,
+      validateStatus: (status) => status < 500,
+    });
+
+    // Set-Cookie 헤더에서 쿠키 추출
+    const setCookies = homeResponse.headers["set-cookie"];
+    let cookieStr = "";
+    if (setCookies) {
+      cookieStr = (Array.isArray(setCookies) ? setCookies : [setCookies])
+        .map((c: string) => c.split(";")[0])
+        .join("; ");
+    }
+
+    logger.info(`[더벨] 세션 쿠키 획득: ${cookieStr ? "성공" : "없음"}`);
+
+    // 2단계: 쿠키를 포함하여 기사 fetch
+    const articleResponse = await axios.get(url, {
+      headers: {
+        "User-Agent": USER_AGENT,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Referer": "https://www.thebell.co.kr/",
+        "Cookie": cookieStr,
+        "Cache-Control": "no-cache",
+      },
+      timeout: 15000,
+      responseType: "text",
+      maxRedirects: 5,
+      validateStatus: (status) => status < 500,
+    });
+
+    if (articleResponse.status === 200 && articleResponse.data && articleResponse.data.length > 500) {
+      logger.info(`[더벨] 기사 fetch 성공 (${articleResponse.data.length}바이트)`);
+      return articleResponse.data;
+    }
+
+    logger.warn(`[더벨] 기사 fetch 실패: HTTP ${articleResponse.status}, 길이: ${articleResponse.data?.length || 0}`);
+
+    // 3단계: free 기사 URL 변형 시도
+    // /free/content/ → /free/Content/ 등 대소문자 변형
+    const altUrls = [
+      url.replace("/free/content/", "/free/Content/"),
+      url.replace("www.thebell.co.kr", "m.thebell.co.kr"),
+    ];
+
+    for (const altUrl of altUrls) {
+      try {
+        const altResponse = await axios.get(altUrl, {
+          headers: {
+            "User-Agent": MOBILE_USER_AGENT,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "ko-KR,ko;q=0.9",
+            "Referer": "https://www.thebell.co.kr/",
+            "Cookie": cookieStr,
+          },
+          timeout: 15000,
+          responseType: "text",
+          maxRedirects: 5,
+          validateStatus: (status) => status < 500,
+        });
+
+        if (altResponse.status === 200 && altResponse.data && altResponse.data.length > 500) {
+          logger.info(`[더벨] 대체 URL fetch 성공: ${altUrl} (${altResponse.data.length}바이트)`);
+          return altResponse.data;
+        }
+      } catch {
+        // 다음 URL 시도
+      }
+    }
+
+    return null;
+  } catch (error) {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    logger.warn(`[더벨] fetch 실패: ${errMsg}`);
+    return null;
+  }
+}
+
 export async function fetchArticleHtml(url: string): Promise<string> {
+  // 더벨 전용 처리
+  if (url.includes("thebell.co.kr")) {
+    const thebellHtml = await fetchThebellHtml(url);
+    if (thebellHtml) return thebellHtml;
+    logger.warn(`[더벨] 전용 fetch 실패, 일반 방식으로 재시도`);
+  }
+
   // URL에서 origin 추출하여 Referer로 사용
   let referer: string;
   try {
