@@ -41,6 +41,11 @@ const CONTENT_SELECTORS = [
   ".news_view", "#newsViewArea", ".news_article", "#news_article",
   ".view_con", ".view_cont", ".view_article", ".viewConts", "#viewContent",
   ".article-view", ".article_view", ".article-body", ".article_body",
+  // 더벨 등 금융 전문 매체
+  "#article_main", "#article_text", ".articleContents", ".article_con",
+  "#articleContent", "#articleText", "#articleCont", ".article_txt",
+  "#sArticle", ".sArticle", "#viewContent", "#viewCont",
+  ".article-content", "#arl_view_content", "#newsBody",
   // skyedaily 등 중소 매체
   ".article_view_content", ".view_content", "#view_content",
   "#CmAdContent", "#textBody", "#newsEndContents",
@@ -139,18 +144,23 @@ export async function extractArticleDetail(
     try {
       html = await fetchArticleHtml(tryUrl);
       if (html && html.length > 500) break;
+      html = null;
     } catch {
       html = null;
     }
   }
 
   if (!html) {
+    // 검색 결과의 요약(summary)이라도 사용
+    const fallbackBody = article.summary && article.summary.length > 20
+      ? article.summary
+      : `[본문을 가져올 수 없습니다: ${url}]`;
     return {
       title: article.title,
       publishDate: article.date,
       reporter: "알 수 없음",
       press: article.press,
-      body: `[본문을 가져올 수 없습니다: ${url}]`,
+      body: fallbackBody,
       link: url,
     };
   }
@@ -176,12 +186,16 @@ export async function extractArticleDetail(
         link: url,
       };
     }
+    // 검색 결과 요약이라도 활용
+    const summaryFallback = article.summary && article.summary.length > 20
+      ? article.summary
+      : `[본문을 충분히 가져올 수 없습니다]`;
     return {
       title: meta.title || article.title,
       publishDate: meta.date || article.date,
       reporter: "알 수 없음",
       press: meta.press || article.press,
-      body: `[본문을 충분히 가져올 수 없습니다]`,
+      body: summaryFallback,
       link: url,
     };
   }

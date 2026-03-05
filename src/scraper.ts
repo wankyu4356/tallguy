@@ -622,13 +622,66 @@ export async function scrapeNaverNews(
 }
 
 export async function fetchArticleHtml(url: string): Promise<string> {
-  const response = await axios.get(url, {
-    headers: {
+  // URL에서 origin 추출하여 Referer로 사용
+  let referer: string;
+  try {
+    const u = new URL(url);
+    referer = u.origin + "/";
+  } catch {
+    referer = url;
+  }
+
+  const headerSets = [
+    // 1차: 데스크톱 Chrome + Referer
+    {
       "User-Agent": USER_AGENT,
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+      "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+      "Referer": referer,
+      "Cache-Control": "no-cache",
+    },
+    // 2차: 모바일 UA + Referer
+    {
+      "User-Agent": MOBILE_USER_AGENT,
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "ko-KR,ko;q=0.9",
+      "Referer": referer,
+    },
+    // 3차: 구글봇 (일부 사이트가 허용)
+    {
+      "User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+      "Accept": "text/html",
       "Accept-Language": "ko-KR,ko;q=0.9",
     },
-    timeout: 15000,
-    responseType: "text",
-  });
-  return response.data;
+  ];
+
+  for (let i = 0; i < headerSets.length; i++) {
+    try {
+      const response = await axios.get(url, {
+        headers: headerSets[i],
+        timeout: 15000,
+        responseType: "text",
+        maxRedirects: 5,
+        validateStatus: (status) => status < 500,
+      });
+
+      if (response.status === 200 && response.data && response.data.length > 500) {
+        return response.data;
+      }
+
+      if (response.status === 403 || response.status === 401) {
+        logger.warn(`[본문 fetch] ${url} → HTTP ${response.status} (시도 ${i + 1}/${headerSets.length})`);
+        continue;
+      }
+
+      if (response.data && response.data.length > 500) {
+        return response.data;
+      }
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      logger.warn(`[본문 fetch] ${url} → 오류 (시도 ${i + 1}/${headerSets.length}): ${errMsg}`);
+    }
+  }
+
+  throw new Error(`모든 fetch 시도 실패: ${url}`);
 }
