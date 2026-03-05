@@ -1101,6 +1101,19 @@ function buildPageHtml(): string {
       var container = document.getElementById('articleGroupsContainer');
       container.innerHTML = '';
 
+      // 기준기간 표시
+      var days = parseInt(document.getElementById('days').value, 10) || 7;
+      var endDate = new Date();
+      var startDate = new Date();
+      startDate.setDate(startDate.getDate() - days);
+      var fmt = function(d) {
+        return d.getFullYear() + '.' + String(d.getMonth() + 1).padStart(2, '0') + '.' + String(d.getDate()).padStart(2, '0');
+      };
+      var periodDiv = document.createElement('div');
+      periodDiv.style.cssText = 'margin-bottom:12px;padding:8px 14px;background:#f0f4f8;border-radius:8px;font-size:14px;color:#37474f;';
+      periodDiv.innerHTML = '<strong>기준기간:</strong> ' + fmt(startDate) + ' ~ ' + fmt(endDate) + ' (' + days + '일)';
+      container.appendChild(periodDiv);
+
       keywords.forEach(function(kw) {
         var articles = articlesByKeyword[kw] || [];
         if (articles.length === 0) return;
