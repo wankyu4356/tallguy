@@ -621,18 +621,112 @@ export async function scrapeNaverNews(
   return searchViaScraping(keyword, days);
 }
 
-/** 더벨(thebell)은 완전 JS 렌더링 사이트 — HTTP 요청으로 본문 가져오기 불가 */
-function fetchThebellHtml(_url: string): Promise<string | null> {
-  logger.info(`[더벨] JS 렌더링 사이트 — 네이버 검색 데이터를 사용합니다`);
-  return Promise.resolve(null);
+/** Playwright가 사용할 Chromium 경로 찾기 */
+async function findChromiumPath(): Promise<string | undefined> {
+  const fs = await import("fs");
+  const os = await import("os");
+  const path = await import("path");
+
+  // 1) ms-playwright 캐시에서 찾기
+  const homeDirs = [os.homedir(), "/root"];
+  for (const home of homeDirs) {
+    const msDir = path.join(home, ".cache", "ms-playwright");
+    if (fs.existsSync(msDir)) {
+      const dirs = fs.readdirSync(msDir)
+        .filter((d: string) => d.startsWith("chromium-"))
+        .sort()
+        .reverse();
+      for (const d of dirs) {
+        for (const bin of ["chrome-linux/chrome", "chrome-win/chrome.exe", "chrome-mac/Chromium.app/Contents/MacOS/Chromium"]) {
+          const p = path.join(msDir, d, bin);
+          if (fs.existsSync(p)) return p;
+        }
+      }
+    }
+  }
+
+  // 2) 시스템 설치된 Chrome/Chromium
+  const systemPaths = [
+    "/usr/bin/chromium-browser",
+    "/usr/bin/chromium",
+    "/usr/bin/google-chrome-stable",
+    "/usr/bin/google-chrome",
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  ];
+  for (const p of systemPaths) {
+    if (fs.existsSync(p)) return p;
+  }
+
+  return undefined;
+}
+
+/** 더벨(thebell)은 JS 렌더링 사이트 — Playwright 헤드리스 브라우저로 가져오기 */
+async function fetchThebellHtml(url: string): Promise<string | null> {
+  try {
+    const { chromium } = await import("playwright-core");
+
+    logger.info(`[더벨] Playwright 브라우저로 기사 가져오기 시도...`);
+
+    const execPath = await findChromiumPath();
+    if (execPath) {
+      logger.info(`[더벨] Chromium 경로: ${execPath}`);
+    }
+
+    const browser = await chromium.launch({
+      headless: true,
+      executablePath: execPath,
+      args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+    });
+
+    try {
+      const context = await browser.newContext({
+        userAgent: USER_AGENT,
+        locale: "ko-KR",
+      });
+      const page = await context.newPage();
+
+      // 불필요한 리소스 차단 (속도 향상)
+      await page.route("**/*.{png,jpg,jpeg,gif,svg,ico,woff,woff2,ttf,eot}", (route) => route.abort());
+      await page.route("**/{analytics,tracking,ad,ads,advertisement}*", (route) => route.abort());
+
+      await page.goto(url, { waitUntil: "domcontentloaded", timeout: 20000 });
+
+      // 더벨 기사 본문이 로드될 때까지 대기
+      try {
+        await page.waitForSelector("#article_main, .viewSection, .articleView, #articleBody", { timeout: 10000 });
+      } catch {
+        // 셀렉터 대기 실패해도 현재 HTML 시도
+        logger.info(`[더벨] 본문 셀렉터 대기 타임아웃 — 현재 HTML 사용`);
+      }
+
+      const html = await page.content();
+      await browser.close();
+
+      if (html && html.length > 2000) {
+        logger.info(`[더벨] Playwright fetch 성공 (${html.length}바이트)`);
+        return html;
+      }
+
+      logger.warn(`[더벨] Playwright fetch 결과 너무 짧음: ${html.length}바이트`);
+      return null;
+    } catch (e) {
+      await browser.close();
+      throw e;
+    }
+  } catch (error) {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    logger.warn(`[더벨] Playwright fetch 실패: ${errMsg}`);
+    return null;
+  }
 }
 
 export async function fetchArticleHtml(url: string): Promise<string> {
-  // 더벨 전용 처리
+  // 더벨 전용 처리 (JS 렌더링 필수)
   if (url.includes("thebell.co.kr")) {
     const thebellHtml = await fetchThebellHtml(url);
     if (thebellHtml) return thebellHtml;
-    logger.warn(`[더벨] 전용 fetch 실패, 일반 방식으로 재시도`);
+    // Playwright 실패 시 일반 HTTP도 불가하므로 바로 throw
+    throw new Error(`더벨 기사 fetch 실패 (Playwright 필요 — npx playwright install chromium 실행 필요): ${url}`);
   }
 
   // URL에서 origin 추출하여 Referer로 사용
