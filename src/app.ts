@@ -249,6 +249,99 @@ function buildPageHtml(): string {
       border-bottom: 2px solid #f0f0f0;
     }
 
+    .form-group textarea {
+      width: 100%;
+      max-width: 500px;
+      padding: 10px 14px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      font-size: 15px;
+      font-family: inherit;
+      transition: border-color 0.2s;
+      outline: none;
+    }
+    .form-group textarea:focus { border-color: #03c75a; }
+
+    /* Keyword chips */
+    .keyword-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 8px;
+      min-height: 0;
+    }
+    .keyword-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 5px 10px;
+      border-radius: 16px;
+      font-size: 13px;
+      font-weight: 500;
+      background: #e8f5e9;
+      border: 1px solid #c8e6c9;
+      color: #2e7d32;
+      line-height: 1.4;
+    }
+    .keyword-chip .kw-term {
+      display: inline-flex;
+      align-items: center;
+      gap: 2px;
+    }
+    .keyword-chip .kw-include {
+      background: #c8e6c9;
+      color: #1b5e20;
+      padding: 1px 6px;
+      border-radius: 10px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .keyword-chip .kw-exclude {
+      background: #ffcdd2;
+      color: #c62828;
+      padding: 1px 6px;
+      border-radius: 10px;
+      font-size: 12px;
+      font-weight: 600;
+      text-decoration: line-through;
+    }
+    .keyword-chip .kw-remove {
+      cursor: pointer;
+      font-size: 14px;
+      color: #999;
+      margin-left: 4px;
+      line-height: 1;
+    }
+    .keyword-chip .kw-remove:hover { color: #e53935; }
+
+    /* Guide box */
+    .guide-box {
+      background: #f0f8ff;
+      border: 1px solid #b3d9ff;
+      border-radius: 8px;
+      padding: 14px 16px;
+      font-size: 13px;
+      line-height: 1.7;
+      color: #1a3a5c;
+    }
+    .guide-box .guide-title {
+      font-weight: 700;
+      font-size: 14px;
+      margin-bottom: 8px;
+      color: #0d47a1;
+    }
+    .guide-box code {
+      background: #e3f2fd;
+      padding: 1px 5px;
+      border-radius: 4px;
+      font-size: 12px;
+      color: #0d47a1;
+    }
+    .guide-box .guide-example {
+      margin: 4px 0;
+    }
+    .guide-box .guide-arrow { color: #999; margin: 0 4px; }
+
     /* Forms */
     .form-group { margin-bottom: 16px; }
     .form-group label {
@@ -400,6 +493,7 @@ function buildPageHtml(): string {
     }
     .article-table .col-title a:hover { text-decoration: underline; }
     .article-table .col-title a:visited { color: #681da8; }
+    .article-table .col-kw { width: 130px; white-space: nowrap; }
     .article-table .col-press { width: 130px; color: #555; white-space: nowrap; }
     .article-table .col-date { width: 110px; color: #999; white-space: nowrap; }
 
@@ -650,10 +744,27 @@ function buildPageHtml(): string {
       <div class="section-title">검색 설정</div>
       <form id="searchForm">
         <div class="form-group">
-          <label for="keywords">검색 키워드 (쉼표로 구분, 복수 입력 가능)</label>
-          <input type="text" id="keywords" name="keywords" required
-                 placeholder="예: 사모펀드, 인수합병, M&A" autocomplete="off" />
-          <div class="hint">키워드를 쉼표(,)로 구분하면 각 키워드별로 검색합니다</div>
+          <label>검색 키워드</label>
+          <div style="display:flex;gap:12px;align-items:flex-start;">
+            <div style="flex:1;max-width:500px;">
+              <div style="display:flex;gap:8px;">
+                <input type="text" id="keywordInput" placeholder="예: PE, 출자" autocomplete="off"
+                       style="flex:1;" onkeydown="if(event.key==='Enter'){event.preventDefault();addKeyword();}" />
+                <button type="button" class="btn btn-secondary" onclick="addKeyword()" style="white-space:nowrap;">+ 추가</button>
+              </div>
+              <div class="keyword-chips" id="keywordChips"></div>
+            </div>
+            <div class="guide-box" style="flex:0 0 320px;">
+              <div class="guide-title">검색어 입력 가이드</div>
+              <div class="guide-example"><code>PE, 출자</code> <span class="guide-arrow">&rarr;</span> PE와 출자 <b>모두 포함</b></div>
+              <div class="guide-example"><code>PE, (대출)</code> <span class="guide-arrow">&rarr;</span> PE 포함, 대출 <b>제외</b></div>
+              <div class="guide-example"><code>사모펀드</code> <span class="guide-arrow">&rarr;</span> 단일 키워드 검색</div>
+              <div style="margin-top:6px;font-size:12px;color:#5a7a9c;">
+                쉼표로 AND 조건 구분, 괄호( )로 제외어 지정<br/>
+                키워드를 여러 개 추가하면 각각 독립 검색합니다
+              </div>
+            </div>
+          </div>
         </div>
         <div class="form-group">
           <label for="analysisPrompt">분석 기준</label>
@@ -755,6 +866,61 @@ function buildPageHtml(): string {
     var emailEnabled = false;
     var emailConfigured = false;
     var emailTo = '';
+
+    // 키워드 목록: [{raw, includes:[], excludes:[]}]
+    var keywordEntries = [];
+
+    function parseKeywordInput(raw) {
+      // "PE, 출자, (대출)" → includes: ["PE","출자"], excludes: ["대출"]
+      var parts = raw.split(',').map(function(s) { return s.trim(); }).filter(function(s) { return s.length > 0; });
+      var includes = [];
+      var excludes = [];
+      parts.forEach(function(p) {
+        var m = p.match(/^\((.+)\)$/);
+        if (m) {
+          excludes.push(m[1].trim());
+        } else {
+          includes.push(p);
+        }
+      });
+      return { raw: raw.trim(), includes: includes, excludes: excludes };
+    }
+
+    function addKeyword() {
+      var input = document.getElementById('keywordInput');
+      var raw = input.value.trim();
+      if (!raw) return;
+      var parsed = parseKeywordInput(raw);
+      if (parsed.includes.length === 0 && parsed.excludes.length === 0) return;
+      keywordEntries.push(parsed);
+      input.value = '';
+      input.focus();
+      renderKeywordChips();
+    }
+
+    function removeKeyword(idx) {
+      keywordEntries.splice(idx, 1);
+      renderKeywordChips();
+    }
+
+    function renderKeywordChips() {
+      var container = document.getElementById('keywordChips');
+      container.innerHTML = '';
+      keywordEntries.forEach(function(entry, idx) {
+        var chip = document.createElement('span');
+        chip.className = 'keyword-chip';
+        var termsHtml = '';
+        entry.includes.forEach(function(t) {
+          termsHtml += '<span class="kw-include">' + escapeHtml(t) + '</span> ';
+        });
+        entry.excludes.forEach(function(t) {
+          termsHtml += '<span class="kw-exclude">' + escapeHtml(t) + '</span> ';
+        });
+        chip.innerHTML = '<span class="kw-term">' + termsHtml + '</span>' +
+          '<span class="kw-remove" onclick="removeKeyword(' + idx + ')">&times;</span>';
+        container.appendChild(chip);
+      });
+    }
 
     // -----------------------------------------------------------------------
     // Utility
@@ -863,12 +1029,15 @@ function buildPageHtml(): string {
 
     document.getElementById('searchForm').addEventListener('submit', async function(e) {
       e.preventDefault();
-      var keywordsRaw = document.getElementById('keywords').value.trim();
+      // 아직 입력 중인 키워드가 있으면 자동 추가
+      var pendingInput = document.getElementById('keywordInput').value.trim();
+      if (pendingInput) { addKeyword(); }
+      if (keywordEntries.length === 0) { showError('키워드를 추가해주세요.'); return; }
+
       var days = parseInt(document.getElementById('days').value, 10);
       var methodEl = document.querySelector('input[name="method"]:checked');
       var method = methodEl ? methodEl.value : 'auto';
       var analysisPrompt = (document.getElementById('analysisPrompt').value || '').trim();
-      if (!keywordsRaw) { showError('키워드를 입력해주세요.'); return; }
       if (isNaN(days) || days < 1) { days = 7; }
 
       var btn = document.getElementById('searchBtn');
@@ -876,14 +1045,13 @@ function buildPageHtml(): string {
       btn.innerHTML = '<span class="spinner"></span>검색 중...';
       document.getElementById('searchLogArea').style.display = 'none';
 
-      // 이메일 설정 반영
       var sendEmail = emailEnabled && emailConfigured;
 
       try {
         var res = await fetch('/api/search', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ keywords: keywordsRaw, days: days, method: method, sendEmail: sendEmail, analysisPrompt: analysisPrompt })
+          body: JSON.stringify({ keywordEntries: keywordEntries, days: days, method: method, sendEmail: sendEmail, analysisPrompt: analysisPrompt })
         });
         var data = await res.json();
 
@@ -930,12 +1098,22 @@ function buildPageHtml(): string {
         group.className = 'keyword-group';
         group.dataset.keyword = kw;
 
+        // 키워드 파싱하여 색상 태그 생성
+        var parsed = parseKeywordInput(kw);
+        var kwTagsHtml = '';
+        parsed.includes.forEach(function(t) {
+          kwTagsHtml += '<span class="kw-include">' + escapeHtml(t) + '</span> ';
+        });
+        parsed.excludes.forEach(function(t) {
+          kwTagsHtml += '<span class="kw-exclude">' + escapeHtml(t) + '</span> ';
+        });
+
         // Header
         var header = document.createElement('div');
         header.className = 'keyword-group-header';
         header.innerHTML =
           '<span class="kw-toggle">&#x25BC;</span>' +
-          '<span class="kw-name">' + escapeHtml(kw) + '</span>' +
+          '<span class="kw-name" style="display:inline-flex;gap:4px;align-items:center;">' + kwTagsHtml + '</span>' +
           '<span class="kw-count">' + articles.length + '건</span>' +
           '<span class="kw-actions">' +
           '  <button type="button" class="btn btn-sm btn-secondary" onclick="event.stopPropagation();selectGroup(\\'' + escapeHtml(kw).replace(/'/g, "\\\\'") + '\\')">선택</button>' +
@@ -953,6 +1131,7 @@ function buildPageHtml(): string {
           '<thead><tr>' +
           '<th class="col-check"><input type="checkbox" checked onchange="toggleGroup(this, \\'' + escapeHtml(kw).replace(/'/g, "\\\\'") + '\\')" /></th>' +
           '<th class="col-idx">#</th>' +
+          '<th class="col-kw">키워드</th>' +
           '<th>기사 제목</th>' +
           '<th class="col-press">언론사</th>' +
           '<th class="col-date">날짜</th>' +
@@ -963,17 +1142,29 @@ function buildPageHtml(): string {
           var tr = document.createElement('tr');
           var link = a.naverLink || a.originalLink;
 
-          // 키워드 문맥 추출
+          // 키워드별 문맥: 포함 키워드 각각에 대해 context 추출
           var contextHtml = '';
-          var ctx = getKeywordContext(a.title, kw);
-          if (!ctx) ctx = getKeywordContext(a.summary, kw);
-          if (ctx) {
-            contextHtml = '<div class="keyword-context">' + ctx + '</div>';
-          }
+          parsed.includes.forEach(function(inc) {
+            var ctx = getKeywordContext(a.title, inc);
+            if (!ctx) ctx = getKeywordContext(a.summary, inc);
+            if (ctx) {
+              contextHtml += '<div class="keyword-context">' + ctx + '</div>';
+            }
+          });
+
+          // 키워드 컬럼용 태그
+          var cellKwHtml = '';
+          parsed.includes.forEach(function(t) {
+            cellKwHtml += '<span class="kw-include" style="font-size:11px;">' + escapeHtml(t) + '</span> ';
+          });
+          parsed.excludes.forEach(function(t) {
+            cellKwHtml += '<span class="kw-exclude" style="font-size:11px;">' + escapeHtml(t) + '</span> ';
+          });
 
           tr.innerHTML =
             '<td class="col-check"><input type="checkbox" class="article-cb" data-keyword="' + escapeHtml(kw) + '" data-index="' + i + '" checked onchange="updateTotalCount()" /></td>' +
             '<td class="col-idx">' + (i + 1) + '</td>' +
+            '<td class="col-kw">' + cellKwHtml + '</td>' +
             '<td class="col-title"><a href="' + escapeHtml(link) + '" target="_blank" rel="noopener">' + escapeHtml(a.title) + '</a>' + contextHtml + '</td>' +
             '<td class="col-press">' + escapeHtml(a.press) + '</td>' +
             '<td class="col-date">' + escapeHtml(a.date) + '</td>';
@@ -1184,7 +1375,9 @@ function buildPageHtml(): string {
       currentArticlesByKeyword = {};
       currentKeywords = [];
       if (eventSource) { eventSource.close(); eventSource = null; }
-      document.getElementById('keywords').value = '';
+      keywordEntries = [];
+      renderKeywordChips();
+      document.getElementById('keywordInput').value = '';
       document.getElementById('days').value = '7';
       document.getElementById('globalError').classList.remove('visible');
       document.getElementById('processBtn').disabled = false;
@@ -1380,29 +1573,34 @@ export function createApp(claudeModel: string): { app: express.Express } {
     });
 
     try {
-      const { keywords: keywordsRaw, days, method, sendEmail, analysisPrompt: rawPrompt } = req.body as {
-        keywords: unknown;
+      const { keywordEntries: rawEntries, days, method, sendEmail, analysisPrompt: rawPrompt } = req.body as {
+        keywordEntries: unknown;
         days: unknown;
         method: unknown;
         sendEmail: unknown;
         analysisPrompt: unknown;
       };
 
-      if (!keywordsRaw || typeof keywordsRaw !== "string" || keywordsRaw.trim().length === 0) {
+      // keywordEntries 파싱: [{raw, includes:[], excludes:[]}]
+      if (!Array.isArray(rawEntries) || rawEntries.length === 0) {
         unsubscribe();
-        res.status(400).json({ error: "키워드를 입력해주세요." });
+        res.status(400).json({ error: "키워드를 추가해주세요." });
         return;
       }
 
-      // 쉼표로 구분된 키워드 파싱
-      const keywords = keywordsRaw
-        .split(",")
-        .map((k: string) => k.trim())
-        .filter((k: string) => k.length > 0);
+      interface KeywordEntry {
+        raw: string;
+        includes: string[];
+        excludes: string[];
+      }
 
-      if (keywords.length === 0) {
+      const keywordEntries: KeywordEntry[] = (rawEntries as KeywordEntry[]).filter(
+        (e) => e && Array.isArray(e.includes) && e.includes.length > 0,
+      );
+
+      if (keywordEntries.length === 0) {
         unsubscribe();
-        res.status(400).json({ error: "키워드를 입력해주세요." });
+        res.status(400).json({ error: "유효한 키워드를 입력해주세요." });
         return;
       }
 
@@ -1412,18 +1610,39 @@ export function createApp(claudeModel: string): { app: express.Express } {
       const searchMethod: SearchMethod =
         method === "api" ? "api" : method === "scraping" ? "scraping" : "auto";
 
-      logger.info(`검색 요청: "${keywords.join(", ")}" (최근 ${parsedDays}일, 방법: ${searchMethod})`);
+      // 각 키워드 엔트리의 표시 레이블 (원본 raw 사용)
+      const keywords = keywordEntries.map((e) => e.raw);
 
-      // 각 키워드별로 검색
+      logger.info(`검색 요청: ${keywords.length}개 키워드 (최근 ${parsedDays}일, 방법: ${searchMethod})`);
+
+      // 각 키워드 엔트리별로 검색
       const articlesByKeyword: Record<string, SearchArticle[]> = {};
       let totalCount = 0;
 
-      for (const kw of keywords) {
-        logger.info(`키워드 "${kw}" 검색 시작...`);
-        const articles = await scrapeNaverNews(kw, parsedDays, searchMethod);
-        articlesByKeyword[kw] = articles;
+      for (const entry of keywordEntries) {
+        const label = entry.raw;
+        // 네이버 검색 쿼리 빌드: include 키워드들을 공백으로 연결
+        const searchQuery = entry.includes.join(" ");
+        logger.info(`키워드 "${label}" → 검색어: "${searchQuery}" 검색 시작...`);
+
+        let articles = await scrapeNaverNews(searchQuery, parsedDays, searchMethod);
+
+        // 제외 키워드 필터링 (제목, 요약에서)
+        if (entry.excludes.length > 0) {
+          const beforeCount = articles.length;
+          articles = articles.filter((a) => {
+            const text = (a.title + " " + (a.summary || "")).toLowerCase();
+            return !entry.excludes.some((ex) => text.includes(ex.toLowerCase()));
+          });
+          const filtered = beforeCount - articles.length;
+          if (filtered > 0) {
+            logger.info(`키워드 "${label}": 제외 필터로 ${filtered}건 제거 (${beforeCount} → ${articles.length})`);
+          }
+        }
+
+        articlesByKeyword[label] = articles;
         totalCount += articles.length;
-        logger.info(`키워드 "${kw}" 검색 완료: ${articles.length}건`);
+        logger.info(`키워드 "${label}" 검색 완료: ${articles.length}건`);
       }
 
       const analysisPrompt = typeof rawPrompt === "string" ? rawPrompt.trim() : "";
@@ -1443,7 +1662,7 @@ export function createApp(claudeModel: string): { app: express.Express } {
       sessionCreatedAt.set(sessionId, Date.now());
 
       logger.info(
-        `검색 완료: "${keywords.join(", ")}" — 총 ${totalCount}건 (세션: ${sessionId})`,
+        `검색 완료: ${keywords.length}개 키워드 — 총 ${totalCount}건 (세션: ${sessionId})`,
       );
 
       unsubscribe();
