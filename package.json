@@ -1,0 +1,29 @@
+{
+  "name": "naver-news-clipper",
+  "version": "1.0.0",
+  "description": "네이버 뉴스 클리핑 도구 - 키워드 기반 뉴스 수집, 분석 및 DOCX 리포트 생성",
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "axios": "^1.7.9",
+    "cheerio": "^1.0.0",
+    "docx": "^9.1.0",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "nodemailer": "^8.0.1",
+    "open": "^10.1.0",
+    "playwright-core": "^1.58.2"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.0",
+    "@types/nodemailer": "^7.0.11",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.0"
+  }
+}
