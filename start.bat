@@ -144,9 +144,19 @@ else {
 
 # Always try to pull latest
 Write-Host "  Pulling latest..."
-cmd /c "git pull origin $BRANCH 2>&1" | Out-Null
-if ($LASTEXITCODE -eq 0) { Write-Ok "Up to date" }
-else { Write-Fail "Pull failed - using local code." }
+$pullOutput = cmd /c "git pull origin $BRANCH 2>&1"
+if ($LASTEXITCODE -eq 0) {
+    Write-Ok "Up to date"
+} else {
+    Write-Fail "Pull failed:"
+    $pullOutput | ForEach-Object { Write-Host "    $_" -ForegroundColor Yellow }
+    Write-Host ""
+    Write-Host "  Trying hard reset to remote..." -ForegroundColor Yellow
+    cmd /c "git fetch origin $BRANCH 2>&1" | Out-Null
+    cmd /c "git reset --hard origin/$BRANCH 2>&1" | Out-Null
+    if ($LASTEXITCODE -eq 0) { Write-Ok "Force-synced to latest" }
+    else { Write-Fail "Sync failed - using local code." }
+}
 
 # Copy start.bat into project for convenience
 $srcBat = Join-Path $startDir "start.bat"
