@@ -10,6 +10,7 @@ $Host.UI.RawUI.WindowTitle = "Naver News Clipper"
 
 $REPO_URL = "https://github.com/wankyu4356/tallguy.git"
 $FOLDER_NAME = "tallguy"
+$BRANCH = "claude/naver-news-clipper-nzP8W"
 
 function Write-Step($step, $total, $msg) { Write-Host "`n[$step/$total] $msg" -ForegroundColor Cyan }
 function Write-Ok($msg) { Write-Host "  [OK] $msg" -ForegroundColor Green }
@@ -100,19 +101,27 @@ else {
     $inProject = $false
 }
 
+# Git outputs progress to stderr — prevent PowerShell from treating it as error
+$ErrorActionPreference = "Continue"
+
 if ($inProject) {
-    Write-Host "  Pulling latest code..."
-    try {
-        $branch = (git rev-parse --abbrev-ref HEAD 2>$null).Trim()
-        git pull origin $branch 2>$null
-        if ($LASTEXITCODE -eq 0) { Write-Ok "Branch: $branch (updated)" }
-        else { Write-Fail "git pull failed - continuing with local code." }
-    } catch {
-        Write-Fail "git pull failed - continuing with local code."
+    # Ensure correct branch
+    $currentBranch = (git rev-parse --abbrev-ref HEAD 2>&1 | Out-String).Trim()
+    if ($currentBranch -ne $BRANCH) {
+        Write-Host "  Switching to branch $BRANCH..."
+        $null = git fetch origin $BRANCH 2>&1
+        $null = git checkout $BRANCH 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            $null = git checkout -b $BRANCH "origin/$BRANCH" 2>&1
+        }
     }
+    Write-Host "  Pulling latest code..."
+    $null = git pull origin $BRANCH 2>&1
+    if ($LASTEXITCODE -eq 0) { Write-Ok "Branch: $BRANCH (updated)" }
+    else { Write-Fail "git pull failed - continuing with local code." }
 } else {
-    Write-Host "  Cloning $REPO_URL ..."
-    git clone $REPO_URL
+    Write-Host "  Cloning $REPO_URL (branch: $BRANCH)..."
+    $null = git clone --branch $BRANCH $REPO_URL 2>&1
     if ($LASTEXITCODE -ne 0) {
         Write-Err "git clone failed. Check your network connection."
         return
@@ -127,6 +136,8 @@ if ($inProject) {
         Copy-Item $srcBat $dstBat -Force
     }
 }
+
+$ErrorActionPreference = "Stop"
 
 # ==============================================================
 # 4. .env setup
@@ -176,14 +187,19 @@ NAVER_CLIENT_SECRET=$naverSec
 # ==============================================================
 Write-Step 5 7 "Installing packages..."
 
+# npm also writes warnings to stderr
+$ErrorActionPreference = "Continue"
+
 if (-not (Test-Path "node_modules")) {
     Write-Host "  Running npm install (first time, may take a while)..."
-    npm install
+    npm install 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
     if ($LASTEXITCODE -ne 0) { Write-Err "npm install failed"; return }
 } else {
-    npm install --prefer-offline 2>$null | Out-Null
+    $null = npm install --prefer-offline 2>&1
 }
 Write-Ok "Packages ready"
+
+$ErrorActionPreference = "Stop"
 
 # ==============================================================
 # 6. Chromium
@@ -210,7 +226,9 @@ if (-not $chromeOk) {
 
 if (-not $chromeOk) {
     Write-Host "  Installing Chromium..."
-    npx playwright install chromium
+    $ErrorActionPreference = "Continue"
+    npx playwright install chromium 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
+    $ErrorActionPreference = "Stop"
 } else {
     Write-Ok "Chrome/Chromium ready"
 }
@@ -228,4 +246,4 @@ Write-Host "============================================================" -Foreg
 Write-Host ""
 
 $ErrorActionPreference = "Continue"
-npx tsx src/index.ts
+npx tsx src/index.ts 2>&1 | ForEach-Object { $_ }
