@@ -1,11 +1,17 @@
 <# :
-@echo off & cd /d "%~dp0"
-powershell -NoProfile -ExecutionPolicy Bypass -Command "iex (Get-Content '%~f0' -Raw -Encoding UTF8)"
-pause & exit /b
+@echo off
+cd /d "%~dp0"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "try { iex (Get-Content '%~f0' -Raw -Encoding UTF8) } catch { Write-Host $_.Exception.Message -ForegroundColor Red }"
+echo.
+pause
+exit /b
 #>
 
+# === Naver News Clipper - One-Click Setup ===
+# ErrorActionPreference is intentionally left at "Continue" (default)
+# to prevent git/npm stderr from killing the script.
+
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-$ErrorActionPreference = "Stop"
 $Host.UI.RawUI.WindowTitle = "Naver News Clipper"
 
 $REPO_URL = "https://github.com/wankyu4356/tallguy.git"
@@ -16,6 +22,13 @@ function Write-Step($step, $total, $msg) { Write-Host "`n[$step/$total] $msg" -F
 function Write-Ok($msg) { Write-Host "  [OK] $msg" -ForegroundColor Green }
 function Write-Fail($msg) { Write-Host "  [!] $msg" -ForegroundColor Yellow }
 function Write-Err($msg) { Write-Host "  [X] $msg" -ForegroundColor Red }
+
+# Helper: run external command, suppress stderr noise, return exit code
+function Invoke-Cmd {
+    param([string]$cmd)
+    $output = cmd /c "$cmd 2>&1"
+    return $LASTEXITCODE
+}
 
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor White
@@ -30,7 +43,6 @@ Write-Step 1 7 "Checking Git..."
 $git = Get-Command git -ErrorAction SilentlyContinue
 if (-not $git) {
     Write-Err "Git not found."
-
     $winget = Get-Command winget -ErrorAction SilentlyContinue
     if ($winget) {
         Write-Host "  Installing Git via winget..."
@@ -40,13 +52,13 @@ if (-not $git) {
             return
         }
     }
-
     Write-Host "  https://git-scm.com/download/win"
     $ans = Read-Host "  Open download page? (Y/N)"
     if ($ans -eq "Y") { Start-Process "https://git-scm.com/download/win" }
     return
 }
-Write-Ok "Git $((git --version) -replace 'git version ','')"
+$gitVer = (cmd /c "git --version 2>&1") -replace "git version ", ""
+Write-Ok "Git $gitVer"
 
 # ==============================================================
 # 2. Check Node.js
@@ -56,7 +68,6 @@ Write-Step 2 7 "Checking Node.js..."
 $node = Get-Command node -ErrorAction SilentlyContinue
 if (-not $node) {
     Write-Err "Node.js not found."
-
     $winget = Get-Command winget -ErrorAction SilentlyContinue
     if ($winget) {
         Write-Host "  Installing Node.js via winget..."
@@ -66,78 +77,83 @@ if (-not $node) {
             return
         }
     }
-
     Write-Host "  https://nodejs.org"
     $ans = Read-Host "  Open download page? (Y/N)"
     if ($ans -eq "Y") { Start-Process "https://nodejs.org" }
     return
 }
-Write-Ok "Node.js $(node --version)"
+$nodeVer = (cmd /c "node --version 2>&1")
+Write-Ok "Node.js $nodeVer"
 
 $npm = Get-Command npm -ErrorAction SilentlyContinue
 if (-not $npm) { Write-Err "npm not found. Reinstall Node.js."; return }
-Write-Ok "npm $(npm --version)"
+$npmVer = (cmd /c "npm --version 2>&1")
+Write-Ok "npm $npmVer"
 
 # ==============================================================
 # 3. Clone or update repo
 # ==============================================================
 Write-Step 3 7 "Setting up project..."
 
-$startDir = Get-Location
+$startDir = (Get-Location).Path
 
-# Case A: already inside the project (start.bat is in repo root)
-if (Test-Path ".git") {
-    Write-Ok "Already in project: $(Get-Location)"
-    $inProject = $true
+# Case A: start.bat is inside the project root
+if (Test-Path "package.json") {
+    Write-Ok "Already in project: $startDir"
 }
-# Case B: subfolder exists
-elseif (Test-Path "$FOLDER_NAME\.git") {
+# Case B: subfolder exists from previous clone
+elseif (Test-Path "$FOLDER_NAME\package.json") {
     Set-Location $FOLDER_NAME
     Write-Ok "Found project: $(Get-Location)"
-    $inProject = $true
 }
-# Case C: fresh clone needed
-else {
-    $inProject = $false
-}
-
-# Git outputs progress to stderr — prevent PowerShell from treating it as error
-$ErrorActionPreference = "Continue"
-
-if ($inProject) {
-    # Ensure correct branch
-    $currentBranch = (git rev-parse --abbrev-ref HEAD 2>&1 | Out-String).Trim()
-    if ($currentBranch -ne $BRANCH) {
-        Write-Host "  Switching to branch $BRANCH..."
-        $null = git fetch origin $BRANCH 2>&1
-        $null = git checkout $BRANCH 2>&1
-        if ($LASTEXITCODE -ne 0) {
-            $null = git checkout -b $BRANCH "origin/$BRANCH" 2>&1
-        }
-    }
-    Write-Host "  Pulling latest code..."
-    $null = git pull origin $BRANCH 2>&1
-    if ($LASTEXITCODE -eq 0) { Write-Ok "Branch: $BRANCH (updated)" }
-    else { Write-Fail "git pull failed - continuing with local code." }
-} else {
-    Write-Host "  Cloning $REPO_URL (branch: $BRANCH)..."
-    $null = git clone --branch $BRANCH $REPO_URL 2>&1
+# Case C: .git exists but wrong branch (no package.json)
+elseif (Test-Path ".git") {
+    Write-Host "  Switching to branch $BRANCH..."
+    cmd /c "git fetch origin $BRANCH 2>&1" | Out-Null
+    cmd /c "git checkout $BRANCH 2>&1" | Out-Null
     if ($LASTEXITCODE -ne 0) {
-        Write-Err "git clone failed. Check your network connection."
+        cmd /c "git checkout -b $BRANCH origin/$BRANCH 2>&1" | Out-Null
+    }
+    cmd /c "git pull origin $BRANCH 2>&1" | Out-Null
+    if (Test-Path "package.json") { Write-Ok "Branch: $BRANCH" }
+    else { Write-Err "package.json not found after checkout."; return }
+}
+elseif (Test-Path "$FOLDER_NAME\.git") {
+    Set-Location $FOLDER_NAME
+    Write-Host "  Switching to branch $BRANCH..."
+    cmd /c "git fetch origin $BRANCH 2>&1" | Out-Null
+    cmd /c "git checkout $BRANCH 2>&1" | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        cmd /c "git checkout -b $BRANCH origin/$BRANCH 2>&1" | Out-Null
+    }
+    cmd /c "git pull origin $BRANCH 2>&1" | Out-Null
+    if (Test-Path "package.json") { Write-Ok "Branch: $BRANCH" }
+    else { Write-Err "package.json not found after checkout."; return }
+}
+# Case D: fresh clone
+else {
+    Write-Host "  Cloning repository..."
+    cmd /c "git clone --branch $BRANCH $REPO_URL 2>&1" | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
+    if (-not (Test-Path "$FOLDER_NAME\package.json")) {
+        Write-Err "Clone failed. Check your network."
         return
     }
     Set-Location $FOLDER_NAME
     Write-Ok "Cloned to: $(Get-Location)"
-
-    # Copy start.bat into the cloned repo for next time
-    $srcBat = Join-Path $startDir "start.bat"
-    $dstBat = Join-Path (Get-Location) "start.bat"
-    if ((Test-Path $srcBat) -and ($srcBat -ne $dstBat)) {
-        Copy-Item $srcBat $dstBat -Force
-    }
 }
 
-$ErrorActionPreference = "Stop"
+# Always try to pull latest
+Write-Host "  Pulling latest..."
+cmd /c "git pull origin $BRANCH 2>&1" | Out-Null
+if ($LASTEXITCODE -eq 0) { Write-Ok "Up to date" }
+else { Write-Fail "Pull failed - using local code." }
+
+# Copy start.bat into project for convenience
+$srcBat = Join-Path $startDir "start.bat"
+$dstBat = Join-Path (Get-Location).Path "start.bat"
+if ((Test-Path $srcBat) -and ($srcBat -ne $dstBat)) {
+    Copy-Item $srcBat $dstBat -Force
+}
 
 # ==============================================================
 # 4. .env setup
@@ -187,19 +203,14 @@ NAVER_CLIENT_SECRET=$naverSec
 # ==============================================================
 Write-Step 5 7 "Installing packages..."
 
-# npm also writes warnings to stderr
-$ErrorActionPreference = "Continue"
-
 if (-not (Test-Path "node_modules")) {
     Write-Host "  Running npm install (first time, may take a while)..."
-    npm install 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
-    if ($LASTEXITCODE -ne 0) { Write-Err "npm install failed"; return }
+    cmd /c "npm install 2>&1" | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
+    if (-not (Test-Path "node_modules")) { Write-Err "npm install failed"; return }
 } else {
-    $null = npm install --prefer-offline 2>&1
+    cmd /c "npm install --prefer-offline 2>&1" | Out-Null
 }
 Write-Ok "Packages ready"
-
-$ErrorActionPreference = "Stop"
 
 # ==============================================================
 # 6. Chromium
@@ -226,9 +237,7 @@ if (-not $chromeOk) {
 
 if (-not $chromeOk) {
     Write-Host "  Installing Chromium..."
-    $ErrorActionPreference = "Continue"
-    npx playwright install chromium 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
-    $ErrorActionPreference = "Stop"
+    cmd /c "npx playwright install chromium 2>&1" | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
 } else {
     Write-Ok "Chrome/Chromium ready"
 }
@@ -245,5 +254,7 @@ Write-Host "  Press Ctrl+C or close this window to stop." -ForegroundColor White
 Write-Host "============================================================" -ForegroundColor White
 Write-Host ""
 
-$ErrorActionPreference = "Continue"
-npx tsx src/index.ts 2>&1 | ForEach-Object { $_ }
+# Use Start-Process to open browser after a delay
+Start-Job -ScriptBlock { Start-Sleep 3; Start-Process "http://localhost:3000" } | Out-Null
+
+cmd /c "npx tsx src/index.ts 2>&1"
