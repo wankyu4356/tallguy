@@ -203,106 +203,231 @@ function buildPageHtml(): string {
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+    :root {
+      --c-primary: #1a73e8;
+      --c-primary-light: #e8f0fe;
+      --c-primary-dark: #1557b0;
+      --c-accent: #00c853;
+      --c-bg: #f0f2f5;
+      --c-surface: #ffffff;
+      --c-text: #1d1d1f;
+      --c-text-secondary: #6e6e73;
+      --c-text-tertiary: #aeaeb2;
+      --c-border: #e5e5ea;
+      --c-border-light: #f2f2f7;
+      --radius: 16px;
+      --radius-sm: 10px;
+      --radius-xs: 6px;
+      --shadow-sm: 0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.06);
+      --shadow-md: 0 4px 20px rgba(0,0,0,0.06), 0 1px 3px rgba(0,0,0,0.04);
+      --shadow-lg: 0 10px 40px rgba(0,0,0,0.08);
+      --transition: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
         'Noto Sans KR', 'Malgun Gothic', sans-serif;
-      background: #f5f6f8;
-      color: #333;
+      background: var(--c-bg);
+      color: var(--c-text);
       line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
     }
 
     .container {
-      max-width: 1200px;
+      max-width: 960px;
       margin: 0 auto;
-      padding: 24px 20px;
+      padding: 32px 24px 64px;
     }
 
-    /* Header */
+    /* ---- Header ---- */
     .app-header {
       text-align: center;
-      margin-bottom: 32px;
+      margin-bottom: 36px;
+      padding: 28px 0 20px;
     }
     .app-header h1 {
-      font-size: 28px;
-      color: #1a1a1a;
-      margin-bottom: 4px;
+      font-size: 26px;
+      font-weight: 800;
+      color: var(--c-text);
+      letter-spacing: -0.5px;
+      margin-bottom: 6px;
     }
-    .app-header h1 span.accent { color: #03c75a; }
-    .app-header p { color: #888; font-size: 14px; }
+    .app-header h1 span.accent {
+      background: linear-gradient(135deg, var(--c-primary), var(--c-accent));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .app-header p {
+      color: var(--c-text-secondary);
+      font-size: 14px;
+      font-weight: 400;
+    }
 
-    /* Sections */
+    /* ---- Step indicator ---- */
+    .step-nav {
+      display: flex;
+      justify-content: center;
+      gap: 0;
+      margin-bottom: 28px;
+    }
+    .step-nav-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 16px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--c-text-tertiary);
+      position: relative;
+    }
+    .step-nav-item .step-num {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 700;
+      background: var(--c-border);
+      color: var(--c-text-tertiary);
+      flex-shrink: 0;
+    }
+    .step-nav-item.active .step-num {
+      background: var(--c-primary);
+      color: #fff;
+    }
+    .step-nav-item.active { color: var(--c-primary); }
+    .step-nav-item.done .step-num {
+      background: var(--c-accent);
+      color: #fff;
+    }
+    .step-nav-item.done { color: var(--c-text-secondary); }
+    .step-nav-connector {
+      width: 32px;
+      height: 2px;
+      background: var(--c-border);
+      align-self: center;
+    }
+    .step-nav-connector.done { background: var(--c-accent); }
+
+    /* ---- Sections ---- */
     .section {
       display: none;
-      background: #fff;
-      border-radius: 12px;
-      box-shadow: 0 2px 12px rgba(0,0,0,0.08);
-      padding: 32px;
+      background: var(--c-surface);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-md);
+      padding: 36px 32px;
       margin-bottom: 24px;
+      border: 1px solid var(--c-border-light);
+      animation: fadeSlideIn 0.35s ease-out;
     }
     .section.active { display: block; }
+    @keyframes fadeSlideIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
     .section-title {
-      font-size: 20px;
+      font-size: 18px;
       font-weight: 700;
-      margin-bottom: 20px;
-      color: #1a1a1a;
-      padding-bottom: 12px;
-      border-bottom: 2px solid #f0f0f0;
+      margin-bottom: 24px;
+      color: var(--c-text);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .section-title::before {
+      content: '';
+      width: 4px;
+      height: 20px;
+      background: var(--c-primary);
+      border-radius: 2px;
+      flex-shrink: 0;
     }
 
+    /* ---- Forms ---- */
+    .form-group { margin-bottom: 20px; }
+    .form-group label {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--c-text-secondary);
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+    .form-group input[type="text"],
+    .form-group input[type="number"],
+    .form-group input[type="email"],
+    .form-group input[type="password"],
     .form-group textarea {
       width: 100%;
-      max-width: 500px;
-      padding: 10px 14px;
-      border: 1px solid #ddd;
-      border-radius: 8px;
-      font-size: 15px;
+      max-width: 520px;
+      padding: 11px 14px;
+      border: 1.5px solid var(--c-border);
+      border-radius: var(--radius-sm);
+      font-size: 14px;
       font-family: inherit;
-      transition: border-color 0.2s;
+      color: var(--c-text);
+      background: var(--c-surface);
+      transition: border-color var(--transition), box-shadow var(--transition);
       outline: none;
     }
-    .form-group textarea:focus { border-color: #03c75a; }
+    .form-group input:focus,
+    .form-group textarea:focus {
+      border-color: var(--c-primary);
+      box-shadow: 0 0 0 3px rgba(26,115,232,0.12);
+    }
+    .form-group .hint {
+      font-size: 12px;
+      color: var(--c-text-tertiary);
+      margin-top: 5px;
+      line-height: 1.5;
+    }
 
-    /* Keyword chips */
+    /* ---- Keyword chips ---- */
     .keyword-chips {
       display: flex;
       flex-wrap: wrap;
       gap: 8px;
-      margin-top: 8px;
+      margin-top: 10px;
       min-height: 0;
     }
     .keyword-chip {
       display: inline-flex;
       align-items: center;
-      gap: 4px;
-      padding: 5px 10px;
-      border-radius: 16px;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: 20px;
       font-size: 13px;
       font-weight: 500;
-      background: #e8f5e9;
-      border: 1px solid #c8e6c9;
-      color: #2e7d32;
+      background: var(--c-primary-light);
+      border: 1px solid #c5d9f0;
+      color: var(--c-primary-dark);
       line-height: 1.4;
+      transition: all var(--transition);
     }
+    .keyword-chip:hover { box-shadow: var(--shadow-sm); }
     .keyword-chip .kw-term {
       display: inline-flex;
       align-items: center;
-      gap: 2px;
+      gap: 3px;
     }
     .kw-include {
-      background: #c8e6c9;
-      color: #1b5e20;
-      padding: 1px 6px;
-      border-radius: 10px;
+      background: #d4edda;
+      color: #155724;
+      padding: 2px 8px;
+      border-radius: 12px;
       font-size: 12px;
       font-weight: 600;
-      text-decoration: none;
       display: inline-block;
     }
     .kw-exclude {
-      background: #ffcdd2;
-      color: #c62828;
-      padding: 1px 6px;
-      border-radius: 10px;
+      background: #f8d7da;
+      color: #721c24;
+      padding: 2px 8px;
+      border-radius: 12px;
       font-size: 12px;
       font-weight: 600;
       text-decoration: line-through;
@@ -310,135 +435,119 @@ function buildPageHtml(): string {
     }
     .keyword-chip .kw-remove {
       cursor: pointer;
-      font-size: 14px;
-      color: #999;
-      margin-left: 4px;
+      font-size: 15px;
+      color: var(--c-text-tertiary);
+      margin-left: 2px;
       line-height: 1;
+      width: 18px;
+      height: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
+      transition: all var(--transition);
     }
-    .keyword-chip .kw-remove:hover { color: #e53935; }
+    .keyword-chip .kw-remove:hover { color: #dc3545; background: rgba(220,53,69,0.1); }
 
-    /* Guide box */
+    /* ---- Guide box ---- */
     .guide-box {
-      background: #f0f8ff;
-      border: 1px solid #b3d9ff;
-      border-radius: 8px;
-      padding: 14px 16px;
+      background: #fafbfc;
+      border: 1px solid var(--c-border);
+      border-radius: var(--radius-sm);
+      padding: 16px 18px;
       font-size: 13px;
-      line-height: 1.7;
-      color: #1a3a5c;
+      line-height: 1.8;
+      color: var(--c-text-secondary);
     }
     .guide-box .guide-title {
       font-weight: 700;
-      font-size: 14px;
+      font-size: 13px;
       margin-bottom: 8px;
-      color: #0d47a1;
+      color: var(--c-text);
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
     }
     .guide-box code {
-      background: #e3f2fd;
-      padding: 1px 5px;
-      border-radius: 4px;
+      background: var(--c-primary-light);
+      padding: 2px 7px;
+      border-radius: var(--radius-xs);
       font-size: 12px;
-      color: #0d47a1;
-    }
-    .guide-box .guide-example {
-      margin: 4px 0;
-    }
-    .guide-box .guide-arrow { color: #999; margin: 0 4px; }
-
-    /* Forms */
-    .form-group { margin-bottom: 16px; }
-    .form-group label {
-      display: block;
-      font-size: 14px;
+      color: var(--c-primary-dark);
       font-weight: 600;
-      color: #555;
-      margin-bottom: 6px;
     }
-    .form-group input[type="text"],
-    .form-group input[type="number"],
-    .form-group input[type="email"],
-    .form-group input[type="password"] {
-      width: 100%;
-      max-width: 500px;
-      padding: 10px 14px;
-      border: 1px solid #ddd;
-      border-radius: 8px;
-      font-size: 15px;
-      transition: border-color 0.2s;
-      outline: none;
-    }
-    .form-group input:focus { border-color: #03c75a; }
-    .form-group .hint {
-      font-size: 12px;
-      color: #999;
-      margin-top: 4px;
-    }
+    .guide-box .guide-example { margin: 5px 0; }
+    .guide-box .guide-arrow { color: var(--c-text-tertiary); margin: 0 6px; }
 
-    /* Buttons */
+    /* ---- Buttons ---- */
     .btn {
       display: inline-flex;
       align-items: center;
+      justify-content: center;
       gap: 6px;
-      padding: 10px 24px;
-      border: 1px solid #ddd;
-      border-radius: 8px;
-      background: #fff;
+      padding: 10px 22px;
+      border: 1.5px solid var(--c-border);
+      border-radius: var(--radius-sm);
+      background: var(--c-surface);
       font-size: 14px;
       font-weight: 500;
       cursor: pointer;
-      transition: all 0.2s;
+      transition: all var(--transition);
+      font-family: inherit;
+      color: var(--c-text);
     }
-    .btn:hover { background: #f5f5f5; border-color: #bbb; }
-    .btn:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
+    .btn:hover { background: #f8f9fa; border-color: #d0d0d5; transform: translateY(-1px); box-shadow: var(--shadow-sm); }
+    .btn:active { transform: translateY(0); }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; transform: none !important; }
     .btn-primary {
-      background: #03c75a;
+      background: var(--c-primary);
       color: #fff;
-      border-color: #03c75a;
+      border-color: var(--c-primary);
       font-weight: 600;
       font-size: 15px;
-      padding: 12px 32px;
+      padding: 12px 36px;
     }
-    .btn-primary:hover { background: #02b04f; }
-    .btn-primary:disabled { background: #a0dbb8; border-color: #a0dbb8; }
+    .btn-primary:hover { background: var(--c-primary-dark); border-color: var(--c-primary-dark); box-shadow: 0 4px 12px rgba(26,115,232,0.25); }
+    .btn-primary:disabled { background: #93bfec; border-color: #93bfec; box-shadow: none; }
     .btn-secondary {
       background: #f8f9fa;
-      border-color: #dee2e6;
+      border-color: var(--c-border);
     }
-    .btn-secondary:hover { background: #e9ecef; }
-    .btn-sm { padding: 6px 14px; font-size: 12px; }
+    .btn-secondary:hover { background: #eef0f2; }
+    .btn-sm { padding: 6px 14px; font-size: 12px; border-radius: 8px; }
 
-    /* Keyword group */
+    /* ---- Keyword group ---- */
     .keyword-group {
-      margin-bottom: 24px;
-      border: 1px solid #e9ecef;
-      border-radius: 10px;
+      margin-bottom: 16px;
+      border: 1px solid var(--c-border);
+      border-radius: var(--radius-sm);
       overflow: hidden;
+      transition: box-shadow var(--transition);
     }
+    .keyword-group:hover { box-shadow: var(--shadow-sm); }
     .keyword-group-header {
       display: flex;
       align-items: center;
       gap: 10px;
-      padding: 12px 16px;
-      background: #f8f9fa;
-      border-bottom: 1px solid #e9ecef;
+      padding: 14px 18px;
+      background: #fafbfc;
+      border-bottom: 1px solid var(--c-border-light);
       cursor: pointer;
       user-select: none;
+      transition: background var(--transition);
     }
-    .keyword-group-header:hover { background: #f0f1f3; }
+    .keyword-group-header:hover { background: #f3f4f6; }
     .keyword-group-header .kw-name {
       font-weight: 700;
-      font-size: 15px;
-      color: #1a1a1a;
+      font-size: 14px;
+      color: var(--c-text);
     }
     .keyword-group-header .kw-count {
-      font-size: 13px;
-      color: #666;
-      background: #e9ecef;
-      padding: 2px 10px;
+      font-size: 12px;
+      color: var(--c-text-secondary);
+      background: var(--c-border);
+      padding: 3px 10px;
       border-radius: 12px;
+      font-weight: 600;
     }
     .keyword-group-header .kw-actions {
       margin-left: auto;
@@ -446,101 +555,108 @@ function buildPageHtml(): string {
       gap: 6px;
     }
     .keyword-group-header .kw-toggle {
-      font-size: 12px;
-      color: #999;
-      transition: transform 0.2s;
+      font-size: 11px;
+      color: var(--c-text-tertiary);
+      transition: transform var(--transition);
     }
     .keyword-group.collapsed .keyword-group-body { display: none; }
     .keyword-group.collapsed .kw-toggle { transform: rotate(-90deg); }
 
-    /* Article table */
+    /* ---- Article table ---- */
     .article-controls {
       display: flex;
-      gap: 10px;
+      gap: 8px;
       align-items: center;
       flex-wrap: wrap;
       margin-bottom: 16px;
     }
     .article-controls .count {
       margin-left: auto;
-      font-size: 14px;
-      color: #666;
+      font-size: 13px;
+      color: var(--c-text-secondary);
+      font-weight: 600;
     }
 
     .article-table {
       width: 100%;
       border-collapse: collapse;
     }
-    .article-table thead { background: #fafafa; }
+    .article-table thead { background: #f8f9fb; }
     .article-table th {
       padding: 10px 14px;
       text-align: left;
-      font-size: 13px;
-      font-weight: 600;
-      color: #666;
-      border-bottom: 2px solid #eee;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--c-text-tertiary);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      border-bottom: 1.5px solid var(--c-border);
       white-space: nowrap;
     }
     .article-table td {
-      padding: 10px 14px;
-      border-bottom: 1px solid #f0f0f0;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--c-border-light);
       font-size: 14px;
+      color: var(--c-text);
     }
-    .article-table tbody tr:hover { background: #f9fefb; }
+    .article-table tbody tr { transition: background var(--transition); }
+    .article-table tbody tr:hover { background: #f6f8ff; }
     .article-table .col-check { width: 40px; text-align: center; }
-    .article-table .col-idx { width: 48px; text-align: center; color: #999; }
+    .article-table .col-idx { width: 44px; text-align: center; color: var(--c-text-tertiary); font-size: 13px; }
     .article-table .col-title a {
-      color: #1a0dab;
+      color: var(--c-primary);
       text-decoration: none;
       line-height: 1.5;
+      font-weight: 500;
     }
     .article-table .col-title a:hover { text-decoration: underline; }
-    .article-table .col-title a:visited { color: #681da8; }
+    .article-table .col-title a:visited { color: #7b61a6; }
     .article-table .col-kw { width: 130px; white-space: nowrap; }
-    .article-table .col-press { width: 130px; color: #555; white-space: nowrap; }
-    .article-table .col-date { width: 110px; color: #999; white-space: nowrap; }
+    .article-table .col-press { width: 120px; color: var(--c-text-secondary); white-space: nowrap; font-size: 13px; }
+    .article-table .col-date { width: 100px; color: var(--c-text-tertiary); white-space: nowrap; font-size: 13px; }
 
     /* Keyword context snippet */
     .keyword-context {
       font-size: 12px;
-      color: #777;
+      color: var(--c-text-tertiary);
       margin-top: 4px;
       line-height: 1.5;
     }
     .keyword-context mark {
-      background: #fff3cd;
+      background: #fef3cd;
       color: #856404;
-      padding: 1px 3px;
+      padding: 1px 4px;
       border-radius: 3px;
       font-weight: 600;
     }
 
     input[type="checkbox"] {
-      width: 18px;
-      height: 18px;
+      width: 17px;
+      height: 17px;
       cursor: pointer;
-      accent-color: #03c75a;
+      accent-color: var(--c-primary);
+      border-radius: 4px;
     }
 
-    /* Progress */
-    .progress-info { margin-bottom: 20px; }
+    /* ---- Progress ---- */
+    .progress-info { margin-bottom: 24px; }
     .step-label {
-      font-size: 16px;
+      font-size: 15px;
       font-weight: 600;
-      color: #333;
+      color: var(--c-text);
       margin-bottom: 10px;
     }
     .progress-bar-track {
       width: 100%;
-      height: 24px;
-      background: #eee;
-      border-radius: 12px;
+      height: 10px;
+      background: var(--c-border-light);
+      border-radius: 5px;
       overflow: hidden;
     }
     .progress-bar-fill {
       height: 100%;
-      background: linear-gradient(90deg, #03c75a, #00e676);
-      border-radius: 12px;
+      background: linear-gradient(90deg, var(--c-primary), #4fc3f7);
+      border-radius: 5px;
       transition: width 0.5s ease;
       width: 0%;
       position: relative;
@@ -552,7 +668,7 @@ function buildPageHtml(): string {
       background: linear-gradient(
         90deg,
         rgba(255,255,255,0) 0%,
-        rgba(255,255,255,0.3) 50%,
+        rgba(255,255,255,0.4) 50%,
         rgba(255,255,255,0) 100%
       );
       animation: shimmer 2s infinite;
@@ -564,64 +680,68 @@ function buildPageHtml(): string {
 
     .log-area {
       margin-top: 20px;
-      background: #1e1e1e;
-      color: #d4d4d4;
-      font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-      font-size: 13px;
-      line-height: 1.7;
-      padding: 16px;
-      border-radius: 8px;
-      max-height: 400px;
+      background: #1a1b1e;
+      color: #c9d1d9;
+      font-family: 'SF Mono', 'Consolas', 'Monaco', 'Courier New', monospace;
+      font-size: 12px;
+      line-height: 1.8;
+      padding: 18px;
+      border-radius: var(--radius-sm);
+      max-height: 360px;
       overflow-y: auto;
       white-space: pre-wrap;
       word-break: break-all;
+      border: 1px solid #30363d;
     }
-    .log-area .log-info { color: #9cdcfe; }
-    .log-area .log-warn { color: #dcdcaa; }
-    .log-area .log-error { color: #f48771; }
-    .log-area .log-time { color: #6a9955; }
+    .log-area .log-info { color: #79c0ff; }
+    .log-area .log-warn { color: #d29922; }
+    .log-area .log-error { color: #f85149; }
+    .log-area .log-time { color: #7ee787; }
 
-    /* Complete section */
-    .complete-content { text-align: center; padding: 40px 0; }
+    /* ---- Complete section ---- */
+    .complete-content { text-align: center; padding: 48px 0; }
     .complete-icon {
-      font-size: 64px;
+      font-size: 56px;
       margin-bottom: 16px;
       display: block;
     }
     .complete-msg {
-      font-size: 20px;
-      font-weight: 700;
-      color: #03c75a;
-      margin-bottom: 8px;
+      font-size: 22px;
+      font-weight: 800;
+      color: var(--c-text);
+      margin-bottom: 6px;
+      letter-spacing: -0.3px;
     }
     .complete-sub {
       font-size: 14px;
-      color: #888;
-      margin-bottom: 28px;
+      color: var(--c-text-secondary);
+      margin-bottom: 32px;
     }
     .complete-actions { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
 
-    /* Error display */
+    /* ---- Error display ---- */
     .error-box {
       background: #fef2f2;
       border: 1px solid #fecaca;
-      border-radius: 8px;
-      padding: 16px;
-      color: #b91c1c;
+      border-radius: var(--radius-sm);
+      padding: 14px 18px;
+      color: #dc2626;
       margin-bottom: 16px;
       display: none;
+      font-size: 14px;
+      font-weight: 500;
     }
-    .error-box.visible { display: block; }
+    .error-box.visible { display: block; animation: fadeSlideIn 0.25s ease-out; }
 
-    /* Email toggle */
+    /* ---- Email toggle ---- */
     .email-toggle {
       display: flex;
       align-items: center;
       gap: 10px;
       padding: 12px 16px;
-      background: #f0f7ff;
-      border: 1px solid #d0e3f7;
-      border-radius: 8px;
+      background: var(--c-primary-light);
+      border: 1px solid #c5d9f0;
+      border-radius: var(--radius-sm);
       margin-bottom: 16px;
     }
     .email-toggle label {
@@ -634,42 +754,50 @@ function buildPageHtml(): string {
     }
     .email-toggle .email-to {
       font-size: 13px;
-      color: #666;
+      color: var(--c-text-secondary);
       margin-left: auto;
     }
 
-    /* Settings groups */
+    /* ---- Settings groups ---- */
     .settings-group {
-      margin-top: 24px;
-      padding-top: 20px;
-      border-top: 1px solid #eee;
+      margin-top: 28px;
+      padding-top: 24px;
+      border-top: 1.5px solid var(--c-border-light);
     }
     .settings-group-title {
-      font-size: 16px;
-      font-weight: 600;
-      color: #333;
-      margin-bottom: 12px;
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--c-text);
+      margin-bottom: 14px;
     }
 
-    /* Spinner */
+    /* ---- Spinner ---- */
     .spinner {
       display: inline-block;
-      width: 18px;
-      height: 18px;
-      border: 3px solid #ddd;
-      border-top-color: #03c75a;
+      width: 16px;
+      height: 16px;
+      border: 2.5px solid var(--c-border);
+      border-top-color: var(--c-primary);
       border-radius: 50%;
-      animation: spin 0.8s linear infinite;
+      animation: spin 0.7s linear infinite;
       vertical-align: middle;
-      margin-right: 6px;
+      margin-right: 8px;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
 
-    /* Responsive */
-    @media (max-width: 600px) {
-      .container { padding: 12px 10px; }
-      .section { padding: 20px 16px; }
+    /* ---- Scrollbar ---- */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #d0d0d5; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #b0b0b5; }
+
+    /* ---- Responsive ---- */
+    @media (max-width: 640px) {
+      .container { padding: 16px 12px 48px; }
+      .section { padding: 24px 18px; border-radius: 12px; }
       .btn-primary { width: 100%; justify-content: center; }
+      .step-nav-item span:not(.step-num) { display: none; }
+      .step-nav-connector { width: 20px; }
     }
   </style>
 </head>
@@ -678,7 +806,20 @@ function buildPageHtml(): string {
     <!-- Header -->
     <div class="app-header">
       <h1><span class="accent">N</span> 뉴스 클리퍼</h1>
-      <p>네이버 뉴스 검색, AI 분석, DOCX 리포트 생성</p>
+      <p>네이버 뉴스 검색 &middot; AI 분석 &middot; DOCX 리포트</p>
+    </div>
+
+    <!-- Step Navigator -->
+    <div class="step-nav" id="stepNav">
+      <div class="step-nav-item active" data-step="0"><span class="step-num">1</span><span>설정</span></div>
+      <div class="step-nav-connector"></div>
+      <div class="step-nav-item" data-step="1"><span class="step-num">2</span><span>검색</span></div>
+      <div class="step-nav-connector"></div>
+      <div class="step-nav-item" data-step="2"><span class="step-num">3</span><span>선택</span></div>
+      <div class="step-nav-connector"></div>
+      <div class="step-nav-item" data-step="3"><span class="step-num">4</span><span>분석</span></div>
+      <div class="step-nav-connector"></div>
+      <div class="step-nav-item" data-step="4"><span class="step-num">5</span><span>완료</span></div>
     </div>
 
     <!-- Global Error -->
@@ -687,7 +828,7 @@ function buildPageHtml(): string {
     <!-- Section 0: Setup -->
     <div class="section" id="sectionSetup">
       <div class="section-title">초기 설정</div>
-      <p style="color:#666;margin-bottom:20px;">서비스를 사용하려면 API 키를 입력하세요. 설정은 .env 파일에 저장됩니다.</p>
+      <p style="color:var(--c-text-secondary);margin-bottom:24px;font-size:14px;">서비스를 사용하려면 API 키를 입력하세요. 설정은 .env 파일에 저장됩니다.</p>
       <form id="setupForm">
         <div class="form-group">
           <label for="setupAnthropicKey">Anthropic API Key (필수)</label>
@@ -821,24 +962,24 @@ function buildPageHtml(): string {
       <div class="section-title">분석 진행 중</div>
       <div class="progress-info">
         <!-- 전체 진행률 -->
-        <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">
+        <div style="display:flex;align-items:center;gap:14px;margin-bottom:12px;">
           <div class="step-label" id="stepLabel" style="margin-bottom:0;flex:1;"><span class="spinner"></span>준비 중...</div>
-          <div id="progressPercent" style="font-size:24px;font-weight:700;color:#03c75a;min-width:60px;text-align:right;">0%</div>
+          <div id="progressPercent" style="font-size:28px;font-weight:800;color:var(--c-primary);min-width:64px;text-align:right;letter-spacing:-1px;">0%</div>
         </div>
         <div class="progress-bar-track">
           <div class="progress-bar-fill" id="progressBar"></div>
         </div>
         <!-- 세부 진행 상황 -->
-        <div id="detailProgress" style="margin-top:14px;padding:14px 16px;background:#f8f9fa;border-radius:8px;display:none;">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
-            <span id="detailStepName" style="font-size:14px;font-weight:600;color:#333;"></span>
-            <span id="detailCount" style="font-size:13px;color:#666;"></span>
+        <div id="detailProgress" style="margin-top:16px;padding:16px 18px;background:#f8f9fb;border-radius:10px;border:1px solid var(--c-border-light);display:none;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+            <span id="detailStepName" style="font-size:13px;font-weight:700;color:var(--c-text);"></span>
+            <span id="detailCount" style="font-size:12px;color:var(--c-text-secondary);font-weight:600;"></span>
           </div>
-          <div style="width:100%;height:8px;background:#e9ecef;border-radius:4px;overflow:hidden;margin-bottom:10px;">
-            <div id="detailBar" style="height:100%;background:#6cb4ee;border-radius:4px;transition:width 0.3s;width:0%;"></div>
+          <div style="width:100%;height:6px;background:var(--c-border);border-radius:3px;overflow:hidden;margin-bottom:10px;">
+            <div id="detailBar" style="height:100%;background:#4fc3f7;border-radius:3px;transition:width 0.3s;width:0%;"></div>
           </div>
-          <div id="detailItem" style="font-size:13px;color:#888;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>
-          <div id="detailEta" style="font-size:12px;color:#aaa;margin-top:4px;"></div>
+          <div id="detailItem" style="font-size:13px;color:var(--c-text-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>
+          <div id="detailEta" style="font-size:12px;color:var(--c-text-tertiary);margin-top:4px;"></div>
         </div>
       </div>
       <div class="log-area" id="logArea"></div>
@@ -847,8 +988,10 @@ function buildPageHtml(): string {
     <!-- Section 4: Complete -->
     <div class="section" id="sectionComplete">
       <div class="complete-content">
-        <span class="complete-icon">&#x2705;</span>
-        <div class="complete-msg">리포트 생성이 완료되었습니다!</div>
+        <div style="width:72px;height:72px;border-radius:50%;background:linear-gradient(135deg,#e8f5e9,#c8e6c9);display:flex;align-items:center;justify-content:center;margin:0 auto 20px;">
+          <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#2e7d32" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+        </div>
+        <div class="complete-msg">리포트가 준비되었습니다</div>
         <div class="complete-sub" id="completeDetail"></div>
         <div class="complete-actions">
           <a class="btn btn-primary" id="downloadBtn" href="#">DOCX 다운로드</a>
@@ -945,6 +1088,19 @@ function buildPageHtml(): string {
     function showSection(id) {
       document.querySelectorAll('.section').forEach(function(s) { s.classList.remove('active'); });
       document.getElementById(id).classList.add('active');
+      // Sync step navigator
+      var stepMap = { sectionSetup: 0, sectionSearch: 1, sectionResults: 2, sectionProgress: 3, sectionComplete: 4 };
+      var currentStep = stepMap[id] != null ? stepMap[id] : -1;
+      var items = document.querySelectorAll('.step-nav-item');
+      var connectors = document.querySelectorAll('.step-nav-connector');
+      items.forEach(function(item, i) {
+        item.classList.remove('active', 'done');
+        if (i < currentStep) item.classList.add('done');
+        else if (i === currentStep) item.classList.add('active');
+      });
+      connectors.forEach(function(c, i) {
+        c.classList.toggle('done', i < currentStep);
+      });
     }
 
     function showError(msg) {
@@ -1110,7 +1266,7 @@ function buildPageHtml(): string {
         return d.getFullYear() + '.' + String(d.getMonth() + 1).padStart(2, '0') + '.' + String(d.getDate()).padStart(2, '0');
       };
       var periodDiv = document.createElement('div');
-      periodDiv.style.cssText = 'margin-bottom:12px;padding:8px 14px;background:#f0f4f8;border-radius:8px;font-size:14px;color:#37474f;';
+      periodDiv.style.cssText = 'margin-bottom:16px;padding:10px 16px;background:#f8f9fb;border:1px solid #e5e5ea;border-radius:10px;font-size:13px;color:#6e6e73;';
       periodDiv.innerHTML = '<strong>기준기간:</strong> ' + fmt(startDate) + ' ~ ' + fmt(endDate) + ' (' + days + '일)';
       container.appendChild(periodDiv);
 
