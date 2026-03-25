@@ -8,44 +8,64 @@ pause & exit /b
 $ErrorActionPreference = "Stop"
 $Host.UI.RawUI.WindowTitle = "Naver News Clipper"
 
-function Write-Step($step, $msg) { Write-Host "`n[$step/6] $msg" -ForegroundColor Cyan }
+$REPO_URL = "https://github.com/wankyu4356/tallguy.git"
+$FOLDER_NAME = "tallguy"
+
+function Write-Step($step, $total, $msg) { Write-Host "`n[$step/$total] $msg" -ForegroundColor Cyan }
 function Write-Ok($msg) { Write-Host "  [OK] $msg" -ForegroundColor Green }
 function Write-Fail($msg) { Write-Host "  [!] $msg" -ForegroundColor Yellow }
 function Write-Err($msg) { Write-Host "  [X] $msg" -ForegroundColor Red }
 
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor White
-Write-Host "  Naver News Clipper" -ForegroundColor White
+Write-Host "  Naver News Clipper - One-Click Setup" -ForegroundColor White
 Write-Host "============================================================" -ForegroundColor White
 
 # ==============================================================
-# 1. Check environment
+# 1. Check Git
 # ==============================================================
-Write-Step 1 "Checking environment..."
+Write-Step 1 7 "Checking Git..."
 
 $git = Get-Command git -ErrorAction SilentlyContinue
 if (-not $git) {
     Write-Err "Git not found."
+
+    $winget = Get-Command winget -ErrorAction SilentlyContinue
+    if ($winget) {
+        Write-Host "  Installing Git via winget..."
+        winget install Git.Git --accept-package-agreements --accept-source-agreements
+        if ($LASTEXITCODE -eq 0) {
+            Write-Ok "Git installed! Close this window and run again."
+            return
+        }
+    }
+
     Write-Host "  https://git-scm.com/download/win"
     $ans = Read-Host "  Open download page? (Y/N)"
     if ($ans -eq "Y") { Start-Process "https://git-scm.com/download/win" }
     return
 }
-$gitVer = (git --version) -replace "git version ", ""
-Write-Ok "Git $gitVer"
+Write-Ok "Git $((git --version) -replace 'git version ','')"
+
+# ==============================================================
+# 2. Check Node.js
+# ==============================================================
+Write-Step 2 7 "Checking Node.js..."
 
 $node = Get-Command node -ErrorAction SilentlyContinue
 if (-not $node) {
     Write-Err "Node.js not found."
+
     $winget = Get-Command winget -ErrorAction SilentlyContinue
     if ($winget) {
         Write-Host "  Installing Node.js via winget..."
         winget install OpenJS.NodeJS.LTS --accept-package-agreements --accept-source-agreements
         if ($LASTEXITCODE -eq 0) {
-            Write-Ok "Installed! Close this window and run again."
+            Write-Ok "Node.js installed! Close this window and run again."
             return
         }
     }
+
     Write-Host "  https://nodejs.org"
     $ans = Read-Host "  Open download page? (Y/N)"
     if ($ans -eq "Y") { Start-Process "https://nodejs.org" }
@@ -58,37 +78,60 @@ if (-not $npm) { Write-Err "npm not found. Reinstall Node.js."; return }
 Write-Ok "npm $(npm --version)"
 
 # ==============================================================
-# 2. Project folder
+# 3. Clone or update repo
 # ==============================================================
-Write-Step 2 "Checking project folder..."
+Write-Step 3 7 "Setting up project..."
 
-if (-not (Test-Path ".git")) {
-    Write-Err "Not a git repository. Make sure start.bat is in the project root."
-    return
+$startDir = Get-Location
+
+# Case A: already inside the project (start.bat is in repo root)
+if (Test-Path ".git") {
+    Write-Ok "Already in project: $(Get-Location)"
+    $inProject = $true
 }
-Write-Ok (Get-Location).Path
+# Case B: subfolder exists
+elseif (Test-Path "$FOLDER_NAME\.git") {
+    Set-Location $FOLDER_NAME
+    Write-Ok "Found project: $(Get-Location)"
+    $inProject = $true
+}
+# Case C: fresh clone needed
+else {
+    $inProject = $false
+}
 
-# ==============================================================
-# 3. Git pull
-# ==============================================================
-Write-Step 3 "Pulling latest code..."
-
-try {
-    $branch = (git rev-parse --abbrev-ref HEAD 2>$null).Trim()
-    git pull origin $branch 2>$null
-    if ($LASTEXITCODE -eq 0) {
-        Write-Ok "Branch: $branch"
-    } else {
+if ($inProject) {
+    Write-Host "  Pulling latest code..."
+    try {
+        $branch = (git rev-parse --abbrev-ref HEAD 2>$null).Trim()
+        git pull origin $branch 2>$null
+        if ($LASTEXITCODE -eq 0) { Write-Ok "Branch: $branch (updated)" }
+        else { Write-Fail "git pull failed - continuing with local code." }
+    } catch {
         Write-Fail "git pull failed - continuing with local code."
     }
-} catch {
-    Write-Fail "git pull failed - continuing with local code."
+} else {
+    Write-Host "  Cloning $REPO_URL ..."
+    git clone $REPO_URL
+    if ($LASTEXITCODE -ne 0) {
+        Write-Err "git clone failed. Check your network connection."
+        return
+    }
+    Set-Location $FOLDER_NAME
+    Write-Ok "Cloned to: $(Get-Location)"
+
+    # Copy start.bat into the cloned repo for next time
+    $srcBat = Join-Path $startDir "start.bat"
+    $dstBat = Join-Path (Get-Location) "start.bat"
+    if ((Test-Path $srcBat) -and ($srcBat -ne $dstBat)) {
+        Copy-Item $srcBat $dstBat -Force
+    }
 }
 
 # ==============================================================
 # 4. .env setup
 # ==============================================================
-Write-Step 4 "Checking .env..."
+Write-Step 4 7 "Checking .env..."
 
 if (-not (Test-Path ".env")) {
     Write-Host ""
@@ -131,7 +174,7 @@ NAVER_CLIENT_SECRET=$naverSec
 # ==============================================================
 # 5. Install packages
 # ==============================================================
-Write-Step 5 "Installing packages..."
+Write-Step 5 7 "Installing packages..."
 
 if (-not (Test-Path "node_modules")) {
     Write-Host "  Running npm install (first time, may take a while)..."
@@ -142,7 +185,11 @@ if (-not (Test-Path "node_modules")) {
 }
 Write-Ok "Packages ready"
 
-Write-Host "  Checking Chromium..."
+# ==============================================================
+# 6. Chromium
+# ==============================================================
+Write-Step 6 7 "Checking Chromium..."
+
 $chromeOk = $false
 
 $pwDir = "$env:LOCALAPPDATA\ms-playwright"
@@ -169,9 +216,9 @@ if (-not $chromeOk) {
 }
 
 # ==============================================================
-# 6. Start server
+# 7. Start server
 # ==============================================================
-Write-Step 6 "Starting server!"
+Write-Step 7 7 "Starting server!"
 
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor White
