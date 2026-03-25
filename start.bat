@@ -1,285 +1,231 @@
-@echo off
-chcp 65001 >nul 2>&1
-setlocal enabledelayedexpansion
+<# :
+@echo off & cd /d "%~dp0"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "iex (Get-Content '%~f0' -Raw -Encoding UTF8)"
+pause & exit /b
+#>
 
-title 네이버 뉴스 클리퍼 - 원클릭 실행
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$ErrorActionPreference = "Stop"
+$Host.UI.RawUI.WindowTitle = "Naver News Clipper"
 
-echo.
-echo ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-echo   네이버 뉴스 클리퍼 - 원클릭 설치 및 실행
-echo ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-echo.
+$REPO_URL = "https://github.com/wankyu4356/tallguy.git"
+$FOLDER_NAME = "tallguy"
 
-:: ============================================================
-:: 1. 환경 체크
-:: ============================================================
+function Write-Step($step, $total, $msg) { Write-Host "`n[$step/$total] $msg" -ForegroundColor Cyan }
+function Write-Ok($msg) { Write-Host "  [OK] $msg" -ForegroundColor Green }
+function Write-Fail($msg) { Write-Host "  [!] $msg" -ForegroundColor Yellow }
+function Write-Err($msg) { Write-Host "  [X] $msg" -ForegroundColor Red }
 
-echo [1/6] 환경 체크 중...
-echo.
+Write-Host ""
+Write-Host "============================================================" -ForegroundColor White
+Write-Host "  Naver News Clipper - One-Click Setup" -ForegroundColor White
+Write-Host "============================================================" -ForegroundColor White
 
-:: --- Git 체크 ---
-where git >nul 2>&1
-if %errorlevel% neq 0 (
-    echo   [!] Git이 설치되어 있지 않습니다.
-    echo.
-    echo   Git 설치 방법:
-    echo     1) https://git-scm.com/download/win 에서 다운로드
-    echo     2) 설치 후 이 파일을 다시 실행하세요
-    echo.
-    echo   자동으로 다운로드 페이지를 열까요? (Y/N)
-    set /p INSTALL_GIT="> "
-    if /i "!INSTALL_GIT!"=="Y" (
-        start https://git-scm.com/download/win
-    )
-    echo.
-    echo   Git 설치 후 이 파일을 다시 실행하세요.
-    goto :end
-) else (
-    for /f "tokens=3" %%v in ('git --version') do set GIT_VER=%%v
-    echo   [OK] Git !GIT_VER!
-)
+# ==============================================================
+# 1. Check Git
+# ==============================================================
+Write-Step 1 7 "Checking Git..."
 
-:: --- Node.js 체크 ---
-where node >nul 2>&1
-if %errorlevel% neq 0 (
-    echo   [!] Node.js가 설치되어 있지 않습니다.
-    echo.
-    echo   자동 설치를 시도합니다...
-    echo.
+$git = Get-Command git -ErrorAction SilentlyContinue
+if (-not $git) {
+    Write-Err "Git not found."
 
-    :: winget으로 시도
-    where winget >nul 2>&1
-    if !errorlevel! equ 0 (
-        echo   winget으로 Node.js LTS 설치 중...
+    $winget = Get-Command winget -ErrorAction SilentlyContinue
+    if ($winget) {
+        Write-Host "  Installing Git via winget..."
+        winget install Git.Git --accept-package-agreements --accept-source-agreements
+        if ($LASTEXITCODE -eq 0) {
+            Write-Ok "Git installed! Close this window and run again."
+            return
+        }
+    }
+
+    Write-Host "  https://git-scm.com/download/win"
+    $ans = Read-Host "  Open download page? (Y/N)"
+    if ($ans -eq "Y") { Start-Process "https://git-scm.com/download/win" }
+    return
+}
+Write-Ok "Git $((git --version) -replace 'git version ','')"
+
+# ==============================================================
+# 2. Check Node.js
+# ==============================================================
+Write-Step 2 7 "Checking Node.js..."
+
+$node = Get-Command node -ErrorAction SilentlyContinue
+if (-not $node) {
+    Write-Err "Node.js not found."
+
+    $winget = Get-Command winget -ErrorAction SilentlyContinue
+    if ($winget) {
+        Write-Host "  Installing Node.js via winget..."
         winget install OpenJS.NodeJS.LTS --accept-package-agreements --accept-source-agreements
-        if !errorlevel! equ 0 (
-            echo.
-            echo   [OK] Node.js 설치 완료!
-            echo   [!] 환경변수 반영을 위해 이 창을 닫고 다시 실행하세요.
-            goto :end
-        )
-    )
+        if ($LASTEXITCODE -eq 0) {
+            Write-Ok "Node.js installed! Close this window and run again."
+            return
+        }
+    }
 
-    :: winget 실패 시 수동 안내
-    echo   자동 설치에 실패했습니다.
-    echo.
-    echo   Node.js 수동 설치 방법:
-    echo     1) https://nodejs.org 에서 LTS 버전 다운로드
-    echo     2) 설치 후 이 파일을 다시 실행하세요
-    echo.
-    echo   다운로드 페이지를 열까요? (Y/N)
-    set /p INSTALL_NODE="> "
-    if /i "!INSTALL_NODE!"=="Y" (
-        start https://nodejs.org
-    )
-    goto :end
-) else (
-    for /f "tokens=1" %%v in ('node --version') do set NODE_VER=%%v
-    echo   [OK] Node.js !NODE_VER!
-)
+    Write-Host "  https://nodejs.org"
+    $ans = Read-Host "  Open download page? (Y/N)"
+    if ($ans -eq "Y") { Start-Process "https://nodejs.org" }
+    return
+}
+Write-Ok "Node.js $(node --version)"
 
-:: --- npm 체크 ---
-where npm >nul 2>&1
-if %errorlevel% neq 0 (
-    echo   [!] npm을 찾을 수 없습니다. Node.js를 재설치하세요.
-    goto :end
-) else (
-    for /f "tokens=1" %%v in ('npm --version') do set NPM_VER=%%v
-    echo   [OK] npm !NPM_VER!
-)
+$npm = Get-Command npm -ErrorAction SilentlyContinue
+if (-not $npm) { Write-Err "npm not found. Reinstall Node.js."; return }
+Write-Ok "npm $(npm --version)"
 
-echo.
+# ==============================================================
+# 3. Clone or update repo
+# ==============================================================
+Write-Step 3 7 "Setting up project..."
 
-:: ============================================================
-:: 2. 프로젝트 디렉토리 이동
-:: ============================================================
+$startDir = Get-Location
 
-echo [2/6] 프로젝트 폴더 확인 중...
+# Case A: already inside the project (start.bat is in repo root)
+if (Test-Path ".git") {
+    Write-Ok "Already in project: $(Get-Location)"
+    $inProject = $true
+}
+# Case B: subfolder exists
+elseif (Test-Path "$FOLDER_NAME\.git") {
+    Set-Location $FOLDER_NAME
+    Write-Ok "Found project: $(Get-Location)"
+    $inProject = $true
+}
+# Case C: fresh clone needed
+else {
+    $inProject = $false
+}
 
-:: 배치 파일이 있는 디렉토리로 이동
-cd /d "%~dp0"
+if ($inProject) {
+    Write-Host "  Pulling latest code..."
+    try {
+        $branch = (git rev-parse --abbrev-ref HEAD 2>$null).Trim()
+        git pull origin $branch 2>$null
+        if ($LASTEXITCODE -eq 0) { Write-Ok "Branch: $branch (updated)" }
+        else { Write-Fail "git pull failed - continuing with local code." }
+    } catch {
+        Write-Fail "git pull failed - continuing with local code."
+    }
+} else {
+    Write-Host "  Cloning $REPO_URL ..."
+    git clone $REPO_URL
+    if ($LASTEXITCODE -ne 0) {
+        Write-Err "git clone failed. Check your network connection."
+        return
+    }
+    Set-Location $FOLDER_NAME
+    Write-Ok "Cloned to: $(Get-Location)"
 
-:: Git 저장소인지 확인
-if not exist ".git" (
-    echo   [!] 이 폴더는 Git 저장소가 아닙니다.
-    echo   start.bat 파일이 프로젝트 루트에 있는지 확인하세요.
-    goto :end
-)
-echo   [OK] 프로젝트 폴더: %cd%
-echo.
+    # Copy start.bat into the cloned repo for next time
+    $srcBat = Join-Path $startDir "start.bat"
+    $dstBat = Join-Path (Get-Location) "start.bat"
+    if ((Test-Path $srcBat) -and ($srcBat -ne $dstBat)) {
+        Copy-Item $srcBat $dstBat -Force
+    }
+}
 
-:: ============================================================
-:: 3. 최신 코드 Pull
-:: ============================================================
+# ==============================================================
+# 4. .env setup
+# ==============================================================
+Write-Step 4 7 "Checking .env..."
 
-echo [3/6] 최신 코드 가져오는 중...
+if (-not (Test-Path ".env")) {
+    Write-Host ""
+    Write-Host "  .env file not found. Let's set it up." -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "  Required API keys:"
+    Write-Host "    - Anthropic API Key (required): https://console.anthropic.com"
+    Write-Host "    - Naver API (recommended):      https://developers.naver.com/apps"
+    Write-Host ""
 
-git pull origin main 2>nul
-if %errorlevel% neq 0 (
-    :: main 브랜치가 아닐 수 있으므로 현재 브랜치에서 pull
-    for /f "tokens=*" %%b in ('git rev-parse --abbrev-ref HEAD') do set BRANCH=%%b
-    git pull origin !BRANCH! 2>nul
-    if !errorlevel! neq 0 (
-        echo   [!] git pull 실패 - 네트워크를 확인하세요. 로컬 코드로 계속합니다.
-    ) else (
-        echo   [OK] 최신 코드 (브랜치: !BRANCH!)
-    )
-) else (
-    echo   [OK] 최신 코드 (브랜치: main)
-)
-echo.
+    $apiKey = Read-Host "  Anthropic API Key (sk-ant-...)"
+    if ([string]::IsNullOrWhiteSpace($apiKey)) {
+        Write-Fail "Skipped. Copying .env.example instead."
+        if (Test-Path ".env.example") { Copy-Item ".env.example" ".env" }
+    } else {
+        $model = Read-Host "  Claude model (Enter = claude-sonnet-4-20250514)"
+        if ([string]::IsNullOrWhiteSpace($model)) { $model = "claude-sonnet-4-20250514" }
 
-:: ============================================================
-:: 4. 환경변수 (.env) 체크
-:: ============================================================
+        $naverId = Read-Host "  Naver Client ID (Enter to skip)"
+        $naverSec = Read-Host "  Naver Client Secret (Enter to skip)"
 
-echo [4/6] 환경변수 설정 확인 중...
+        @"
+ANTHROPIC_API_KEY=$apiKey
+CLAUDE_MODEL=$model
+NAVER_CLIENT_ID=$naverId
+NAVER_CLIENT_SECRET=$naverSec
+"@ | Set-Content -Path ".env" -Encoding UTF8
 
-if not exist ".env" (
-    echo.
-    echo   ============================================================
-    echo   .env 파일이 없습니다. 초기 설정을 진행합니다.
-    echo   ============================================================
-    echo.
-    echo   아래 API 키를 준비하세요:
-    echo.
-    echo   1) Anthropic Claude API Key (필수)
-    echo      - https://console.anthropic.com 에서 발급
-    echo.
-    echo   2) 네이버 Open API (권장 - 더 정확한 검색)
-    echo      - https://developers.naver.com/apps 에서 애플리케이션 등록
-    echo      - 사용 API: "검색" 선택
-    echo      - Client ID / Client Secret 발급
-    echo.
+        Write-Ok ".env created"
+    }
+} else {
+    $envContent = Get-Content ".env" -Raw
+    if ($envContent -match "your-api-key-here") {
+        Write-Fail "ANTHROPIC_API_KEY is placeholder. Edit .env file."
+    } else {
+        Write-Ok ".env OK"
+    }
+}
 
-    :: Anthropic API Key
-    set /p ANT_KEY="  Anthropic API Key (sk-ant-...): "
-    if "!ANT_KEY!"=="" (
-        echo   [!] API Key가 입력되지 않았습니다.
-        echo   .env.example 파일을 .env로 복사 후 직접 수정하세요.
-        copy .env.example .env >nul 2>&1
-        goto :env_done
-    )
+# ==============================================================
+# 5. Install packages
+# ==============================================================
+Write-Step 5 7 "Installing packages..."
 
-    :: Claude Model
-    set CLAUDE_MDL=claude-sonnet-4-20250514
-    set /p CLAUDE_MDL_INPUT="  Claude 모델 (Enter=claude-sonnet-4-20250514): "
-    if not "!CLAUDE_MDL_INPUT!"=="" set CLAUDE_MDL=!CLAUDE_MDL_INPUT!
+if (-not (Test-Path "node_modules")) {
+    Write-Host "  Running npm install (first time, may take a while)..."
+    npm install
+    if ($LASTEXITCODE -ne 0) { Write-Err "npm install failed"; return }
+} else {
+    npm install --prefer-offline 2>$null | Out-Null
+}
+Write-Ok "Packages ready"
 
-    :: Naver API
-    set /p NAVER_ID="  네이버 Client ID (없으면 Enter): "
-    set /p NAVER_SEC="  네이버 Client Secret (없으면 Enter): "
+# ==============================================================
+# 6. Chromium
+# ==============================================================
+Write-Step 6 7 "Checking Chromium..."
 
-    :: .env 파일 생성
-    (
-        echo ANTHROPIC_API_KEY=!ANT_KEY!
-        echo CLAUDE_MODEL=!CLAUDE_MDL!
-        echo NAVER_CLIENT_ID=!NAVER_ID!
-        echo NAVER_CLIENT_SECRET=!NAVER_SEC!
-    ) > .env
+$chromeOk = $false
 
-    echo.
-    echo   [OK] .env 파일 생성 완료!
-) else (
-    :: .env 존재 — 필수 키 확인
-    findstr /C:"ANTHROPIC_API_KEY=" .env >nul 2>&1
-    if !errorlevel! neq 0 (
-        echo   [!] ANTHROPIC_API_KEY가 .env에 없습니다. .env 파일을 확인하세요.
-    ) else (
-        :: 값이 비어있거나 placeholder인지 체크
-        findstr /C:"ANTHROPIC_API_KEY=your-api-key-here" .env >nul 2>&1
-        if !errorlevel! equ 0 (
-            echo   [!] ANTHROPIC_API_KEY가 아직 기본값입니다. .env 파일을 수정하세요.
-        ) else (
-            echo   [OK] .env 파일 확인 완료
-        )
-    )
-)
+$pwDir = "$env:LOCALAPPDATA\ms-playwright"
+if (Test-Path $pwDir) {
+    $chromiumDirs = Get-ChildItem $pwDir -Directory -Filter "chromium-*" -ErrorAction SilentlyContinue
+    foreach ($d in $chromiumDirs) {
+        if (Test-Path "$($d.FullName)\chrome-win\chrome.exe") { $chromeOk = $true; break }
+    }
+}
 
-:env_done
-echo.
+if (-not $chromeOk) {
+    @(
+        "$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
+        "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe",
+        "$env:LOCALAPPDATA\Google\Chrome\Application\chrome.exe"
+    ) | ForEach-Object { if (Test-Path $_) { $chromeOk = $true } }
+}
 
-:: ============================================================
-:: 5. npm 의존성 설치
-:: ============================================================
+if (-not $chromeOk) {
+    Write-Host "  Installing Chromium..."
+    npx playwright install chromium
+} else {
+    Write-Ok "Chrome/Chromium ready"
+}
 
-echo [5/6] 패키지 설치 중...
+# ==============================================================
+# 7. Start server
+# ==============================================================
+Write-Step 7 7 "Starting server!"
 
-if not exist "node_modules" (
-    echo   npm install 실행 중 (최초 1회, 시간이 좀 걸립니다)...
-    call npm install
-    if !errorlevel! neq 0 (
-        echo   [!] npm install 실패. 오류 메시지를 확인하세요.
-        goto :end
-    )
-    echo   [OK] 패키지 설치 완료
-) else (
-    :: package.json이 node_modules보다 새로우면 재설치
-    call npm install --prefer-offline 2>nul
-    echo   [OK] 패키지 확인 완료
-)
+Write-Host ""
+Write-Host "============================================================" -ForegroundColor White
+Write-Host "  http://localhost:3000" -ForegroundColor White
+Write-Host "  Press Ctrl+C or close this window to stop." -ForegroundColor White
+Write-Host "============================================================" -ForegroundColor White
+Write-Host ""
 
-:: --- Playwright Chromium 체크 ---
-echo.
-echo   Playwright Chromium 확인 중...
-set "PW_CACHE=%LOCALAPPDATA%\ms-playwright"
-set CHROMIUM_FOUND=0
-
-if exist "!PW_CACHE!" (
-    for /d %%d in ("!PW_CACHE!\chromium-*") do (
-        if exist "%%d\chrome-win\chrome.exe" set CHROMIUM_FOUND=1
-    )
-)
-
-if !CHROMIUM_FOUND! equ 0 (
-    :: 시스템 Chrome도 체크
-    if exist "%PROGRAMFILES%\Google\Chrome\Application\chrome.exe" (
-        echo   [OK] 시스템 Chrome 감지 - Playwright Chromium 설치 생략
-        set CHROMIUM_FOUND=1
-    )
-    if exist "%PROGRAMFILES(X86)%\Google\Chrome\Application\chrome.exe" (
-        echo   [OK] 시스템 Chrome 감지 - Playwright Chromium 설치 생략
-        set CHROMIUM_FOUND=1
-    )
-    if exist "%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe" (
-        echo   [OK] 시스템 Chrome 감지 - Playwright Chromium 설치 생략
-        set CHROMIUM_FOUND=1
-    )
-)
-
-if !CHROMIUM_FOUND! equ 0 (
-    echo   Playwright Chromium 설치 중 (더벨 등 JS 사이트 기사 추출에 필요)...
-    call npx playwright install chromium 2>nul
-    if !errorlevel! equ 0 (
-        echo   [OK] Chromium 설치 완료
-    ) else (
-        echo   [!] Chromium 설치 실패 - 더벨 기사는 요약만 표시됩니다.
-    )
-) else (
-    if !CHROMIUM_FOUND! equ 1 (
-        echo   [OK] Chromium 준비 완료
-    )
-)
-
-echo.
-
-:: ============================================================
-:: 6. 서버 실행
-:: ============================================================
-
-echo [6/6] 서버 시작 중...
-echo.
-echo ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-echo   잠시 후 브라우저에서 http://localhost:3000 이 열립니다.
-echo   이 창을 닫으면 서버가 종료됩니다.
-echo   종료하려면 Ctrl+C를 누르세요.
-echo ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-echo.
-
-call npx tsx src/index.ts
-
-:end
-echo.
-echo 아무 키나 누르면 종료합니다...
-pause >nul
-endlocal
+$ErrorActionPreference = "Continue"
+npx tsx src/index.ts
