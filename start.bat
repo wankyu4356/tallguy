@@ -10,6 +10,7 @@ $Host.UI.RawUI.WindowTitle = "Naver News Clipper"
 
 $REPO_URL = "https://github.com/wankyu4356/tallguy.git"
 $FOLDER_NAME = "tallguy"
+$BRANCH = "claude/naver-news-clipper-nzP8W"
 
 function Write-Step($step, $total, $msg) { Write-Host "`n[$step/$total] $msg" -ForegroundColor Cyan }
 function Write-Ok($msg) { Write-Host "  [OK] $msg" -ForegroundColor Green }
@@ -101,18 +102,27 @@ else {
 }
 
 if ($inProject) {
+    # Ensure correct branch
+    $currentBranch = (git rev-parse --abbrev-ref HEAD 2>$null).Trim()
+    if ($currentBranch -ne $BRANCH) {
+        Write-Host "  Switching to branch $BRANCH..."
+        git fetch origin $BRANCH 2>$null
+        git checkout $BRANCH 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            git checkout -b $BRANCH "origin/$BRANCH" 2>$null
+        }
+    }
     Write-Host "  Pulling latest code..."
     try {
-        $branch = (git rev-parse --abbrev-ref HEAD 2>$null).Trim()
-        git pull origin $branch 2>$null
-        if ($LASTEXITCODE -eq 0) { Write-Ok "Branch: $branch (updated)" }
+        git pull origin $BRANCH 2>$null
+        if ($LASTEXITCODE -eq 0) { Write-Ok "Branch: $BRANCH (updated)" }
         else { Write-Fail "git pull failed - continuing with local code." }
     } catch {
         Write-Fail "git pull failed - continuing with local code."
     }
 } else {
-    Write-Host "  Cloning $REPO_URL ..."
-    git clone $REPO_URL
+    Write-Host "  Cloning $REPO_URL (branch: $BRANCH)..."
+    git clone --branch $BRANCH $REPO_URL
     if ($LASTEXITCODE -ne 0) {
         Write-Err "git clone failed. Check your network connection."
         return
