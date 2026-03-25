@@ -1,4 +1,11 @@
 @echo off
+:: 어떤 에러가 나도 창이 닫히지 않도록 보호
+if not defined TALLGUY_WRAPPED (
+    set "TALLGUY_WRAPPED=1"
+    cmd /k "%~f0" %*
+    exit /b
+)
+
 chcp 65001 >nul 2>&1
 setlocal enabledelayedexpansion
 
@@ -250,3 +257,4 @@ echo.
 echo 아무 키나 누르면 종료합니다...
 pause >nul
 endlocal
+exit /b
