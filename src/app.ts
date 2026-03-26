@@ -791,6 +791,191 @@ function buildPageHtml(): string {
     ::-webkit-scrollbar-thumb { background: #d0d0d5; border-radius: 3px; }
     ::-webkit-scrollbar-thumb:hover { background: #b0b0b5; }
 
+    /* ---- Fun fact card ---- */
+    .fun-fact-card {
+      margin-top: 24px;
+      padding: 20px 22px;
+      background: linear-gradient(135deg, #fafbfc 0%, #f0f4ff 100%);
+      border: 1px solid var(--c-border);
+      border-radius: var(--radius-sm);
+      position: relative;
+      cursor: pointer;
+      transition: all var(--transition);
+    }
+    .fun-fact-card:hover { box-shadow: var(--shadow-sm); border-color: #c5d9f0; }
+    .fun-fact-cat {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--c-primary);
+      background: var(--c-primary-light);
+      padding: 3px 10px;
+      border-radius: 12px;
+      margin-bottom: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+    .fun-fact-text {
+      font-size: 14px;
+      line-height: 1.7;
+      color: var(--c-text);
+    }
+    .fun-fact-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 12px;
+    }
+    .fun-fact-label {
+      font-size: 11px;
+      color: var(--c-text-tertiary);
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .fun-fact-next {
+      font-size: 12px;
+      color: var(--c-primary);
+      font-weight: 600;
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 4px 8px;
+      border-radius: var(--radius-xs);
+      transition: background var(--transition);
+    }
+    .fun-fact-next:hover { background: var(--c-primary-light); }
+
+    /* ---- Quiz overlay ---- */
+    .quiz-overlay {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.6);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+      animation: fadeIn 0.3s ease-out;
+      padding: 20px;
+    }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    .quiz-modal {
+      background: var(--c-surface);
+      border-radius: 20px;
+      box-shadow: var(--shadow-lg), 0 0 0 1px rgba(0,0,0,0.05);
+      padding: 36px 32px;
+      max-width: 520px;
+      width: 100%;
+      animation: modalSlideIn 0.35s ease-out;
+    }
+    @keyframes modalSlideIn {
+      from { opacity: 0; transform: translateY(20px) scale(0.97); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+    .quiz-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 700;
+      color: #e67e22;
+      background: #fef5e7;
+      border: 1px solid #fde8c8;
+      padding: 5px 14px;
+      border-radius: 20px;
+      margin-bottom: 20px;
+    }
+    .quiz-question {
+      font-size: 17px;
+      font-weight: 700;
+      color: var(--c-text);
+      line-height: 1.6;
+      margin-bottom: 24px;
+    }
+    .quiz-options {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .quiz-option {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 14px 18px;
+      border: 1.5px solid var(--c-border);
+      border-radius: var(--radius-sm);
+      background: var(--c-surface);
+      cursor: pointer;
+      transition: all var(--transition);
+      font-size: 14px;
+      line-height: 1.6;
+      color: var(--c-text);
+      text-align: left;
+    }
+    .quiz-option:hover { border-color: var(--c-primary); background: var(--c-primary-light); }
+    .quiz-option .opt-num {
+      flex-shrink: 0;
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      background: #f0f1f3;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--c-text-secondary);
+      margin-top: 1px;
+    }
+    .quiz-option:hover .opt-num { background: var(--c-primary); color: #fff; }
+    .quiz-option.correct {
+      border-color: #00c853;
+      background: #e8f5e9;
+      animation: correctPulse 0.5s ease-out;
+    }
+    .quiz-option.correct .opt-num { background: #00c853; color: #fff; }
+    @keyframes correctPulse {
+      0% { transform: scale(1); }
+      50% { transform: scale(1.02); }
+      100% { transform: scale(1); }
+    }
+    .quiz-option.wrong {
+      border-color: #ef5350;
+      background: #fef2f2;
+    }
+    .quiz-option.wrong .opt-num { background: #ef5350; color: #fff; }
+    .quiz-result {
+      margin-top: 16px;
+      padding: 12px 16px;
+      border-radius: var(--radius-sm);
+      font-size: 14px;
+      font-weight: 600;
+      text-align: center;
+      display: none;
+    }
+    .quiz-result.wrong-msg {
+      display: block;
+      background: #fef2f2;
+      color: #dc2626;
+      border: 1px solid #fecaca;
+      animation: shake 0.4s ease-out;
+    }
+    .quiz-result.correct-msg {
+      display: block;
+      background: #e8f5e9;
+      color: #2e7d32;
+      border: 1px solid #c8e6c9;
+    }
+    @keyframes shake {
+      0%, 100% { transform: translateX(0); }
+      20% { transform: translateX(-8px); }
+      40% { transform: translateX(8px); }
+      60% { transform: translateX(-4px); }
+      80% { transform: translateX(4px); }
+    }
+
     /* ---- Responsive ---- */
     @media (max-width: 640px) {
       .container { padding: 16px 12px 48px; }
@@ -798,10 +983,21 @@ function buildPageHtml(): string {
       .btn-primary { width: 100%; justify-content: center; }
       .step-nav-item span:not(.step-num) { display: none; }
       .step-nav-connector { width: 20px; }
+      .quiz-modal { padding: 28px 22px; }
     }
   </style>
 </head>
 <body>
+  <!-- Quiz Overlay (5% chance) -->
+  <div class="quiz-overlay" id="quizOverlay" style="display:none;">
+    <div class="quiz-modal">
+      <div class="quiz-badge">&#x1F9E0; 알쓸신잡 퀴즈</div>
+      <div class="quiz-question" id="quizQuestion"></div>
+      <div class="quiz-options" id="quizOptions"></div>
+      <div class="quiz-result" id="quizResult"></div>
+    </div>
+  </div>
+
   <div class="container">
     <!-- Header -->
     <div class="app-header">
@@ -926,13 +1122,13 @@ function buildPageHtml(): string {
           <label>검색 방법</label>
           <div style="display:flex;gap:16px;margin-top:4px;">
             <label style="display:flex;align-items:center;gap:6px;font-weight:400;cursor:pointer;">
-              <input type="radio" name="method" value="auto" checked style="accent-color:#03c75a;" /> 자동 (API 우선)
+              <input type="radio" name="method" value="auto" checked style="accent-color:var(--c-primary);" /> 자동 (API 우선)
             </label>
             <label style="display:flex;align-items:center;gap:6px;font-weight:400;cursor:pointer;">
-              <input type="radio" name="method" value="api" style="accent-color:#03c75a;" /> 네이버 API
+              <input type="radio" name="method" value="api" style="accent-color:var(--c-primary);" /> 네이버 API
             </label>
             <label style="display:flex;align-items:center;gap:6px;font-weight:400;cursor:pointer;">
-              <input type="radio" name="method" value="scraping" style="accent-color:#03c75a;" /> 웹 스크래핑
+              <input type="radio" name="method" value="scraping" style="accent-color:var(--c-primary);" /> 웹 스크래핑
             </label>
           </div>
         </div>
@@ -940,6 +1136,15 @@ function buildPageHtml(): string {
         <button type="submit" class="btn btn-primary" id="searchBtn">검색 시작</button>
       </form>
       <div class="log-area" id="searchLogArea" style="display:none;margin-top:20px;"></div>
+      <!-- Fun Fact -->
+      <div class="fun-fact-card" id="funFactCard" onclick="showNextFact()">
+        <div class="fun-fact-cat" id="funFactCat"></div>
+        <div class="fun-fact-text" id="funFactText"></div>
+        <div class="fun-fact-footer">
+          <span class="fun-fact-label">&#x1F4A1; 알쓸신잡</span>
+          <button type="button" class="fun-fact-next" onclick="event.stopPropagation();showNextFact()">다른 사실 보기 &rarr;</button>
+        </div>
+      </div>
     </div>
 
     <!-- Section 2: Results -->
@@ -1617,6 +1822,81 @@ function buildPageHtml(): string {
       }
     });
 
+    // -----------------------------------------------------------------------
+    // Fun Facts & Quiz
+    // -----------------------------------------------------------------------
+    var FACTS = [
+      {cat:"동물 & 자연",text:"문어는 심장이 3개인데, 수영할 때는 그 중 하나가 멈춘다. 그래서 문어는 수영보다 걷는 걸 선호한다."},
+      {cat:"동물 & 자연",text:"바나나는 식물학적으로 '베리'이고, 딸기는 베리가 아니다. 세상이 우리에게 거짓말을 하고 있다."},
+      {cat:"동물 & 자연",text:"고양이는 야옹 소리를 오직 인간에게만 낸다. 고양이끼리는 야옹하지 않는다."},
+      {cat:"역사 & 문명",text:"클레오파트라가 살던 시대는 아이폰 출시 시점에 더 가깝다. 피라미드 건설 시점보다."},
+      {cat:"역사 & 문명",text:"닌텐도는 1889년에 설립됐다. 화투 카드를 만드는 회사로 시작했다."},
+      {cat:"우주 & 과학",text:"토성은 물에 뜬다. 밀도가 물보다 낮은 유일한 행성이다. (물론 그만큼 큰 욕조는 없다.)"},
+      {cat:"우주 & 과학",text:"화성의 일몰은 파란색이다. 지구의 석양은 붉고, 화성의 석양은 푸르다."},
+      {cat:"음식 & 일상",text:"꿀은 상하지 않는다. 3,000년 된 이집트 무덤의 꿀도 먹을 수 있었다."},
+      {cat:"기술 & 디지털",text:"CAPTCHA를 풀 때마다 당신은 무료로 AI 학습 데이터를 라벨링해주고 있는 것이다."},
+      {cat:"잡학 & 반전",text:"라이터는 성냥보다 먼저 발명됐다. 라이터 1823년, 성냥 1826년."}
+    ];
+
+    var QUIZ = [
+      {q:"문어의 심장은 몇 개일까?",o:["2개","3개","5개"],a:1},
+      {q:"다음 중 식물학적으로 '베리(berry)'에 해당하는 것은?",o:["딸기","바나나","체리"],a:1},
+      {q:"닌텐도가 설립된 연도는?",o:["1923년","1889년","1945년"],a:1},
+      {q:"토성이 특별한 이유는?",o:["가장 빠르게 자전한다","물에 뜰 수 있다","고리가 3개다"],a:1},
+      {q:"라이터와 성냥 중 먼저 발명된 것은?",o:["성냥","동시에 발명","라이터"],a:2}
+    ];
+
+    var lastFactIdx = -1;
+    function showNextFact() {
+      if (FACTS.length === 0) return;
+      var idx;
+      do { idx = Math.floor(Math.random() * FACTS.length); } while (idx === lastFactIdx && FACTS.length > 1);
+      lastFactIdx = idx;
+      var f = FACTS[idx];
+      var catEl = document.getElementById('funFactCat');
+      var textEl = document.getElementById('funFactText');
+      if (catEl) catEl.textContent = f.cat;
+      if (textEl) textEl.textContent = f.text;
+    }
+
+    var quizCorrectAnswer = -1;
+    function showQuiz() {
+      if (QUIZ.length === 0) return;
+      var q = QUIZ[Math.floor(Math.random() * QUIZ.length)];
+      quizCorrectAnswer = q.a;
+      document.getElementById('quizQuestion').textContent = q.q;
+      var optHtml = '';
+      var labels = ['A','B','C'];
+      q.o.forEach(function(opt, i) {
+        optHtml += '<div class="quiz-option" onclick="checkAnswer(' + i + ',this)">' +
+          '<span class="opt-num">' + labels[i] + '</span>' +
+          '<span>' + escapeHtml(opt) + '</span></div>';
+      });
+      document.getElementById('quizOptions').innerHTML = optHtml;
+      document.getElementById('quizResult').className = 'quiz-result';
+      document.getElementById('quizResult').textContent = '';
+      document.getElementById('quizOverlay').style.display = 'flex';
+    }
+
+    function checkAnswer(idx, el) {
+      var result = document.getElementById('quizResult');
+      if (idx === quizCorrectAnswer) {
+        el.classList.add('correct');
+        result.className = 'quiz-result correct-msg';
+        result.textContent = '정답! 대단해요 🎉';
+        setTimeout(function() {
+          document.getElementById('quizOverlay').style.display = 'none';
+        }, 1200);
+      } else {
+        el.classList.add('wrong');
+        result.className = 'quiz-result wrong-msg';
+        result.textContent = '오답! 다시 도전하세요 😅';
+        setTimeout(function() {
+          showQuiz();
+        }, 1500);
+      }
+    }
+
     // Auto-detect: show setup or search on page load
     (async function() {
       try {
@@ -1629,6 +1909,11 @@ function buildPageHtml(): string {
         var stored = localStorage.getItem('emailEnabled');
         emailEnabled = stored !== null ? stored === 'true' : emailConfigured;
         renderEmailToggle();
+
+        // Show initial fun fact
+        showNextFact();
+        // 5% chance quiz gate
+        if (Math.random() < 0.05) { showQuiz(); }
 
         if (data.needsSetup) {
           // Pre-fill existing values
