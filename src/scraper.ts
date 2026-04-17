@@ -138,7 +138,7 @@ function parseDesktopPage(html: string): SearchArticle[] {
         }
       });
 
-      return articles;
+      if (articles.length > 0) return articles;
     }
   }
 
@@ -312,7 +312,7 @@ function parseMobilePage(html: string): SearchArticle[] {
         }
       });
 
-      return articles;
+      if (articles.length > 0) return articles;
     }
   }
 

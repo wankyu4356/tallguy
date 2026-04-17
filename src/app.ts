@@ -386,6 +386,28 @@ function buildPageHtml(): string {
       line-height: 1.5;
     }
 
+    /* ---- Date range picker ---- */
+    .date-range-row { display:flex; align-items:center; gap:10px; max-width:520px; }
+    .date-range-row input[type="date"] {
+      flex:1; padding:11px 14px; border:1.5px solid var(--c-border);
+      border-radius: var(--radius-sm); font-size:14px; background:var(--c-surface);
+      color:var(--c-text); transition: border-color .15s, box-shadow .15s;
+      font-family: inherit;
+    }
+    .date-range-row input[type="date"]:focus {
+      outline:none; border-color: var(--c-primary);
+      box-shadow: 0 0 0 3px rgba(26,115,232,0.12);
+    }
+    .date-sep { color: var(--c-text-tertiary); font-weight:500; font-size:15px; }
+    .date-presets { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+    .preset-chip {
+      padding:6px 14px; border:1px solid var(--c-border); background:var(--c-surface);
+      border-radius:999px; font-size:12px; color:var(--c-text-secondary);
+      cursor:pointer; transition: all .15s; font-family: inherit;
+    }
+    .preset-chip:hover { border-color: var(--c-primary); color: var(--c-primary); background: var(--c-primary-light); }
+    .preset-chip.active { border-color: var(--c-primary); color: #fff; background: var(--c-primary); font-weight:500; }
+
     /* ---- Keyword chips ---- */
     .keyword-chips {
       display: flex;
@@ -1114,8 +1136,19 @@ function buildPageHtml(): string {
           <div class="hint">AI가 기사를 분석·정렬할 기준을 자유롭게 입력하세요. 비워두면 일반 뉴스 중요도 순으로 정리합니다.</div>
         </div>
         <div class="form-group">
-          <label for="days">검색 기간 (일)</label>
-          <input type="number" id="days" name="days" value="7" min="1" max="365" oninput="updateDateRange()" />
+          <label>검색 기간</label>
+          <div class="date-range-row">
+            <input type="date" id="startDate" onchange="onDateRangeChange()" />
+            <span class="date-sep">~</span>
+            <input type="date" id="endDate" onchange="onDateRangeChange()" />
+          </div>
+          <div class="date-presets">
+            <button type="button" class="preset-chip" onclick="setDaysPreset(7)">7일</button>
+            <button type="button" class="preset-chip" onclick="setDaysPreset(30)">30일</button>
+            <button type="button" class="preset-chip" onclick="setDaysPreset(90)">3개월</button>
+            <button type="button" class="preset-chip" onclick="setDaysPreset(365)">1년</button>
+            <button type="button" class="preset-chip" onclick="setDaysPreset(730)">2년</button>
+          </div>
           <div class="hint" id="dateRangeHint"></div>
         </div>
         <div class="form-group">
@@ -1332,21 +1365,60 @@ function buildPageHtml(): string {
       return before + match + after;
     }
 
-    function updateDateRange() {
-      var days = parseInt(document.getElementById('days').value, 10);
-      var hint = document.getElementById('dateRangeHint');
-      if (isNaN(days) || days < 1) { hint.textContent = ''; return; }
+    function _pad2(n) { return String(n).padStart(2, '0'); }
+    function toDateStr(d) { return d.getFullYear() + '-' + _pad2(d.getMonth()+1) + '-' + _pad2(d.getDate()); }
+
+    function initDateRange() {
       var end = new Date();
-      var start = new Date();
-      start.setDate(start.getDate() - days);
-      var fmt = function(d) {
-        return d.getFullYear() + '.' + String(d.getMonth()+1).padStart(2,'0') + '.' + String(d.getDate()).padStart(2,'0')
-          + ' ' + String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
-      };
-      hint.textContent = fmt(start) + ' ~ ' + fmt(end) + ' (' + days + '일간)';
+      var start = new Date(); start.setDate(start.getDate() - 6);
+      document.getElementById('endDate').value = toDateStr(end);
+      document.getElementById('startDate').value = toDateStr(start);
+      document.getElementById('endDate').max = toDateStr(end);
+      onDateRangeChange();
+      highlightPreset(7);
     }
-    // 페이지 로드 시 초기 표시
-    updateDateRange();
+
+    function onDateRangeChange() {
+      var s = document.getElementById('startDate').value;
+      var e = document.getElementById('endDate').value;
+      var hint = document.getElementById('dateRangeHint');
+      if (!s || !e) { hint.textContent = ''; return; }
+      var sd = new Date(s), ed = new Date(e);
+      if (sd > ed) { hint.textContent = '시작일이 종료일보다 늦습니다'; hint.style.color = '#d93025'; return; }
+      hint.style.color = '';
+      var days = Math.round((ed - sd) / 86400000) + 1;
+      hint.textContent = s.replace(/-/g,'.') + ' ~ ' + e.replace(/-/g,'.') + ' (' + days + '일간)';
+      document.querySelectorAll('.preset-chip').forEach(function(b){ b.classList.remove('active'); });
+    }
+
+    function setDaysPreset(days) {
+      var end = new Date();
+      var start = new Date(); start.setDate(start.getDate() - days + 1);
+      document.getElementById('endDate').value = toDateStr(end);
+      document.getElementById('startDate').value = toDateStr(start);
+      onDateRangeChange();
+      highlightPreset(days);
+    }
+
+    function highlightPreset(days) {
+      document.querySelectorAll('.preset-chip').forEach(function(b){ b.classList.remove('active'); });
+      var map = {7:0, 30:1, 90:2, 365:3, 730:4};
+      var chips = document.querySelectorAll('.preset-chip');
+      if (map[days] !== undefined && chips[map[days]]) chips[map[days]].classList.add('active');
+    }
+
+    function getSelectedDays() {
+      var s = document.getElementById('startDate').value;
+      var e = document.getElementById('endDate').value;
+      if (!s || !e) return 7;
+      var sd = new Date(s), ed = new Date(e);
+      if (sd > ed) return 7;
+      var today = new Date(); today.setHours(0,0,0,0);
+      var days = Math.round((today - sd) / 86400000) + 1;
+      return Math.max(1, days);
+    }
+
+    initDateRange();
 
     function updateTotalCount() {
       var checked = document.querySelectorAll('.article-cb:checked').length;
@@ -1406,11 +1478,10 @@ function buildPageHtml(): string {
       if (pendingInput) { addKeyword(); }
       if (keywordEntries.length === 0) { showError('키워드를 추가해주세요.'); return; }
 
-      var days = parseInt(document.getElementById('days').value, 10);
+      var days = getSelectedDays();
       var methodEl = document.querySelector('input[name="method"]:checked');
       var method = methodEl ? methodEl.value : 'auto';
       var analysisPrompt = (document.getElementById('analysisPrompt').value || '').trim();
-      if (isNaN(days) || days < 1) { days = 7; }
 
       var btn = document.getElementById('searchBtn');
       btn.disabled = true;
@@ -1463,16 +1534,12 @@ function buildPageHtml(): string {
       container.innerHTML = '';
 
       // 기준기간 표시
-      var days = parseInt(document.getElementById('days').value, 10) || 7;
-      var endDate = new Date();
-      var startDate = new Date();
-      startDate.setDate(startDate.getDate() - days);
-      var fmt = function(d) {
-        return d.getFullYear() + '.' + String(d.getMonth() + 1).padStart(2, '0') + '.' + String(d.getDate()).padStart(2, '0');
-      };
+      var _s = document.getElementById('startDate').value || '';
+      var _e = document.getElementById('endDate').value || '';
+      var days = getSelectedDays();
       var periodDiv = document.createElement('div');
       periodDiv.style.cssText = 'margin-bottom:16px;padding:10px 16px;background:#f8f9fb;border:1px solid #e5e5ea;border-radius:10px;font-size:13px;color:#6e6e73;';
-      periodDiv.innerHTML = '<strong>기준기간:</strong> ' + fmt(startDate) + ' ~ ' + fmt(endDate) + ' (' + days + '일)';
+      periodDiv.innerHTML = '<strong>기준기간:</strong> ' + _s.replace(/-/g,'.') + ' ~ ' + _e.replace(/-/g,'.') + ' (' + days + '일)';
       container.appendChild(periodDiv);
 
       keywords.forEach(function(kw) {
@@ -1763,7 +1830,7 @@ function buildPageHtml(): string {
       keywordEntries = [];
       renderKeywordChips();
       document.getElementById('keywordInput').value = '';
-      document.getElementById('days').value = '7';
+      initDateRange();
       document.getElementById('globalError').classList.remove('visible');
       document.getElementById('processBtn').disabled = false;
       document.getElementById('processBtn').textContent = '선택 완료 및 분석 시작';
