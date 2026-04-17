@@ -341,7 +341,7 @@ export async function extractAllArticles(
   const total = articles.length;
   const results: (ArticleDetail | null)[] = new Array(total).fill(null);
   let completed = 0;
-  const CONCURRENCY = 5;
+  const CONCURRENCY = 10;
 
   console.log(`\n📄 기사 본문 추출 중... (${total}건, 동시 ${CONCURRENCY}건)`);
 
