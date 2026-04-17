@@ -2147,34 +2147,38 @@ export function createApp(claudeModel: string): { app: express.Express } {
 
       logger.info(`검색 요청: ${keywords.length}개 키워드 (최근 ${parsedDays}일, 방법: ${searchMethod})`);
 
-      // 각 키워드 엔트리별로 검색
+      // 각 키워드 엔트리별로 병렬 검색
       const articlesByKeyword: Record<string, SearchArticle[]> = {};
       let totalCount = 0;
 
-      for (const entry of keywordEntries) {
-        const label = entry.raw;
-        // 네이버 검색 쿼리 빌드: include 키워드들을 공백으로 연결
-        const searchQuery = entry.includes.join(" ");
-        logger.info(`키워드 "${label}" → 검색어: "${searchQuery}" 검색 시작...`);
+      const searchResults = await Promise.all(
+        keywordEntries.map(async (entry) => {
+          const label = entry.raw;
+          const searchQuery = entry.includes.join(" ");
+          logger.info(`키워드 "${label}" → 검색어: "${searchQuery}" 검색 시작...`);
 
-        let articles = await scrapeNaverNews(searchQuery, parsedDays, searchMethod);
+          let articles = await scrapeNaverNews(searchQuery, parsedDays, searchMethod);
 
-        // 제외 키워드 필터링 (제목, 요약에서)
-        if (entry.excludes.length > 0) {
-          const beforeCount = articles.length;
-          articles = articles.filter((a) => {
-            const text = (a.title + " " + (a.summary || "")).toLowerCase();
-            return !entry.excludes.some((ex) => text.includes(ex.toLowerCase()));
-          });
-          const filtered = beforeCount - articles.length;
-          if (filtered > 0) {
-            logger.info(`키워드 "${label}": 제외 필터로 ${filtered}건 제거 (${beforeCount} → ${articles.length})`);
+          if (entry.excludes.length > 0) {
+            const beforeCount = articles.length;
+            articles = articles.filter((a) => {
+              const text = (a.title + " " + (a.summary || "")).toLowerCase();
+              return !entry.excludes.some((ex) => text.includes(ex.toLowerCase()));
+            });
+            const filtered = beforeCount - articles.length;
+            if (filtered > 0) {
+              logger.info(`키워드 "${label}": 제외 필터로 ${filtered}건 제거 (${beforeCount} → ${articles.length})`);
+            }
           }
-        }
 
+          logger.info(`키워드 "${label}" 검색 완료: ${articles.length}건`);
+          return { label, articles };
+        }),
+      );
+
+      for (const { label, articles } of searchResults) {
         articlesByKeyword[label] = articles;
         totalCount += articles.length;
-        logger.info(`키워드 "${label}" 검색 완료: ${articles.length}건`);
       }
 
       const analysisPrompt = typeof rawPrompt === "string" ? rawPrompt.trim() : "";

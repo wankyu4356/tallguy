@@ -338,37 +338,45 @@ export async function extractAllArticles(
   model: string,
   onProgress?: ProgressCallback,
 ): Promise<ArticleDetail[]> {
-  const results: ArticleDetail[] = [];
   const total = articles.length;
+  const results: (ArticleDetail | null)[] = new Array(total).fill(null);
+  let completed = 0;
+  const CONCURRENCY = 5;
 
-  console.log(`\n📄 기사 본문 추출 중... (${total}건)`);
+  console.log(`\n📄 기사 본문 추출 중... (${total}건, 동시 ${CONCURRENCY}건)`);
 
-  for (let i = 0; i < total; i++) {
-    const title = articles[i].title;
-    process.stdout.write(`\r   [${i + 1}/${total}] ${title.slice(0, 40)}...`);
-    onProgress?.(i + 1, total, title);
+  const queue = articles.map((article, index) => ({ article, index }));
 
-    try {
-      const detail = await extractArticleDetail(articles[i], claude, model);
-      results.push(detail);
-    } catch (error) {
-      console.error(`\n   ⚠️  기사 추출 실패: ${title}`);
-      results.push({
-        title,
-        publishDate: articles[i].date,
-        reporter: "알 수 없음",
-        press: articles[i].press,
-        body: "[추출 실패]",
-        link: articles[i].naverLink || articles[i].originalLink,
-      });
-    }
+  async function worker() {
+    while (true) {
+      const item = queue.shift();
+      if (!item) break;
+      const { article, index } = item;
+      const title = article.title;
 
-    // API rate limit 방지
-    if (i < total - 1) {
-      await new Promise((r) => setTimeout(r, 300));
+      try {
+        const detail = await extractArticleDetail(article, claude, model);
+        results[index] = detail;
+      } catch {
+        results[index] = {
+          title,
+          publishDate: article.date,
+          reporter: "알 수 없음",
+          press: article.press,
+          body: "[추출 실패]",
+          link: article.naverLink || article.originalLink,
+        };
+      }
+
+      completed++;
+      process.stdout.write(`\r   [${completed}/${total}] ${title.slice(0, 40)}...`);
+      onProgress?.(completed, total, title);
     }
   }
 
-  console.log(`\n   ✅ ${results.length}건의 기사 본문 추출 완료\n`);
-  return results;
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, total) }, () => worker()));
+
+  const finalResults = results.filter((r): r is ArticleDetail => r !== null);
+  console.log(`\n   ✅ ${finalResults.length}건의 기사 본문 추출 완료\n`);
+  return finalResults;
 }
