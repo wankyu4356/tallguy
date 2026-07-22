@@ -334,7 +334,7 @@ async function searchViaScrapingRange(
   endDate: Date,
   days: number,
 ): Promise<SearchArticle[]> {
-  logger.info(`[웹 스크래핑] 네이버 뉴스 검색: "${keyword}" (최근 ${days}일)`);
+  logger.info(`[네이버 검색 수집] "${keyword}" (${days}일 구간)`);
   logger.info(`검색 기간: ${formatDate(startDate).dot} ~ ${formatDate(endDate).dot}`);
 
   // ── 시도 1: 데스크톱 검색 (CSS 셀렉터 + 같은 HTML에서 JSON 추출 폴백) ──
@@ -582,22 +582,31 @@ async function searchViaNaverApi(keyword: string, days: number): Promise<SearchA
   }
 
   // API 페이지네이션 한도(~1,100건)에 걸려 기간 내 기사가 잘린 경우
-  // 수집된 가장 오래된 날짜 이전 구간을 기간을 쪼개 여러 번 웹 스크래핑으로 보완
-  // (네이버 API는 날짜 범위 파라미터가 없어 여러 번 호출해도 같은 최신 결과만 반환됨)
+  // 나머지 구간을 약 1,000건 단위가 되도록 기간을 쪼개 여러 번 나눠서 수집
+  // (네이버 API는 날짜 범위 파라미터가 없어 같은 쿼리를 반복 호출하면 동일한 최신 결과만 반환됨
+  //  → 날짜 범위를 지정할 수 있는 검색 URL로 구간별 수집)
   if (reachedApiCap && oldestDate > startDate) {
+    // API로 수집된 구간의 기사 밀도로 "약 1,000건에 해당하는 일수"를 추정
+    const apiCoveredDays = Math.max(1, (endDate.getTime() - oldestDate.getTime()) / 86400000);
+    const articlesPerDay = allArticles.length / apiCoveredDays;
+    const chunkDaysTarget = Math.min(365, Math.max(7, Math.floor(1000 / Math.max(0.1, articlesPerDay))));
+
+    const totalChunks = Math.ceil(
+      (oldestDate.getTime() - startDate.getTime()) / (chunkDaysTarget * 86400000),
+    );
     logger.warn(
       `[네이버 API] 결과가 API 한도(약 1,100건)에서 잘렸습니다. ` +
-      `${formatDate(startDate).dot} ~ ${formatDate(oldestDate).dot} 구간을 나눠서 추가 수집합니다...`,
+      `${formatDate(startDate).dot} ~ ${formatDate(oldestDate).dot} 구간을 ` +
+      `약 ${chunkDaysTarget}일(≈1,000건) 단위 ${totalChunks}회로 나눠 추가 수집합니다...`,
     );
-    const CHUNK_DAYS = 60;
+
     let chunkEnd = new Date(oldestDate);
     let added = 0;
     let chunkNo = 0;
-    const totalChunks = Math.ceil((oldestDate.getTime() - startDate.getTime()) / (CHUNK_DAYS * 86400000));
 
     while (chunkEnd > startDate) {
       chunkNo++;
-      const chunkStart = new Date(Math.max(startDate.getTime(), chunkEnd.getTime() - CHUNK_DAYS * 86400000));
+      const chunkStart = new Date(Math.max(startDate.getTime(), chunkEnd.getTime() - chunkDaysTarget * 86400000));
       logger.info(
         `[추가 수집 ${chunkNo}/${totalChunks}] ${formatDate(chunkStart).dot} ~ ${formatDate(chunkEnd).dot}`,
       );
@@ -621,7 +630,7 @@ async function searchViaNaverApi(keyword: string, days: number): Promise<SearchA
     if (added > 0) {
       logger.info(`[추가 수집] 총 ${added}건 추가됨`);
     } else {
-      logger.warn("[추가 수집] 추가 기사를 찾지 못했습니다. (스크래핑 차단 가능성)");
+      logger.warn("[추가 수집] 추가 기사를 찾지 못했습니다.");
     }
   }
 

@@ -1165,20 +1165,6 @@ function buildPageHtml(): string {
           <div class="hint" id="dateRangeHint"></div>
         </div>
         <div class="form-group">
-          <label>검색 방법</label>
-          <div style="display:flex;gap:16px;margin-top:4px;">
-            <label style="display:flex;align-items:center;gap:6px;font-weight:400;cursor:pointer;">
-              <input type="radio" name="method" value="auto" checked style="accent-color:var(--c-primary);" /> 자동 (API 우선)
-            </label>
-            <label style="display:flex;align-items:center;gap:6px;font-weight:400;cursor:pointer;">
-              <input type="radio" name="method" value="api" style="accent-color:var(--c-primary);" /> 네이버 API
-            </label>
-            <label style="display:flex;align-items:center;gap:6px;font-weight:400;cursor:pointer;">
-              <input type="radio" name="method" value="scraping" style="accent-color:var(--c-primary);" /> 웹 스크래핑
-            </label>
-          </div>
-        </div>
-        <div class="form-group">
           <label>AI 분석 옵션</label>
           <div style="display:flex;gap:16px;margin-top:4px;flex-wrap:wrap;">
             <label style="display:flex;align-items:center;gap:6px;font-weight:400;cursor:pointer;">
@@ -1539,8 +1525,7 @@ function buildPageHtml(): string {
       if (keywordEntries.length === 0) { showError('키워드를 추가해주세요.'); return; }
 
       var days = getSelectedDays();
-      var methodEl = document.querySelector('input[name="method"]:checked');
-      var method = methodEl ? methodEl.value : 'auto';
+      var method = 'auto';
       var analysisPrompt = (document.getElementById('analysisPrompt').value || '').trim();
 
       var btn = document.getElementById('searchBtn');
