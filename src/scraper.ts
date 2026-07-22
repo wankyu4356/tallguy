@@ -165,10 +165,11 @@ function parseEmbeddedJson(html: string): SearchArticle[] {
   }
 
   // 2) window.__PRELOADED_STATE__ 또는 유사 패턴
+  // 상태 객체는 보통 한 줄 minified JSON — 줄 끝까지 캡처해야 중간 "};"에서 잘리지 않음
   const preloadPatterns = [
-    /window\.__PRELOADED_STATE__\s*=\s*(\{[\s\S]*?\});/,
-    /window\.__SSR_DATA__\s*=\s*(\{[\s\S]*?\});/,
-    /window\.__INITIAL_STATE__\s*=\s*(\{[\s\S]*?\});/,
+    /window\.__PRELOADED_STATE__\s*=\s*(\{.*\});?\s*$/m,
+    /window\.__SSR_DATA__\s*=\s*(\{.*\});?\s*$/m,
+    /window\.__INITIAL_STATE__\s*=\s*(\{.*\});?\s*$/m,
   ];
   for (const pattern of preloadPatterns) {
     const match = html.match(pattern);
@@ -235,6 +236,7 @@ function extractNewsFromJson(obj: unknown, depth = 0): SearchArticle[] {
 
   if (Array.isArray(obj)) {
     for (const item of obj) {
+      let matched = false;
       if (item && typeof item === "object" && "title" in item) {
         const o = item as Record<string, unknown>;
         const link = String(o.originallink || o.link || o.href || o.url || "");
@@ -247,20 +249,20 @@ function extractNewsFromJson(obj: unknown, depth = 0): SearchArticle[] {
             date: String(o.pubDate || o.datetime || o.date || ""),
             summary: stripHtml(String(o.description || o.body || o.snippet || "")),
           });
+          matched = true;
         }
       }
-      // 재귀 탐색
-      if (articles.length === 0) {
+      // 기사로 매칭되지 않은 항목만 재귀 탐색 (형제 항목을 건너뛰지 않도록 누적)
+      if (!matched) {
         articles.push(...extractNewsFromJson(item, depth + 1));
       }
     }
     return articles;
   }
 
-  // 객체의 모든 값을 순회
+  // 객체의 모든 값을 순회하며 누적
   for (const value of Object.values(obj as Record<string, unknown>)) {
-    const found = extractNewsFromJson(value, depth + 1);
-    if (found.length > 0) return found;
+    articles.push(...extractNewsFromJson(value, depth + 1));
   }
 
   return articles;
@@ -327,37 +329,22 @@ async function searchViaScraping(keyword: string, days: number): Promise<SearchA
   logger.info(`[웹 스크래핑] 네이버 뉴스 검색: "${keyword}" (최근 ${days}일)`);
   logger.info(`검색 기간: ${formatDate(startDate).dot} ~ ${formatDate(endDate).dot}`);
 
-  // ── 시도 1: 데스크톱 검색 (CSS 셀렉터) ──
-  logger.info("시도 1/3: 데스크톱 검색 (CSS 셀렉터)...");
+  // ── 시도 1: 데스크톱 검색 (CSS 셀렉터 + 같은 HTML에서 JSON 추출 폴백) ──
+  logger.info("시도 1/2: 데스크톱 검색 (CSS 셀렉터 + 내장 JSON)...");
   const desktopArticles = await fetchAndParsePaged(
     (page) => buildDesktopSearchUrl(keyword, startDate, endDate, page),
-    (html) => parseDesktopPage(html),
+    (html) => {
+      const fromCss = parseDesktopPage(html);
+      if (fromCss.length > 0) return fromCss;
+      return parseEmbeddedJson(html);
+    },
     USER_AGENT,
     "데스크톱",
   );
   if (desktopArticles.length > 0) return desktopArticles;
 
-  // ── 시도 2: 데스크톱 HTML에서 JSON 데이터 추출 ──
-  logger.info("시도 2/3: 데스크톱 HTML 내 JSON 데이터 추출...");
-  try {
-    const url = buildDesktopSearchUrl(keyword, startDate, endDate, 1);
-    const response = await axios.get(url, {
-      headers: { "User-Agent": USER_AGENT, "Accept-Language": "ko-KR,ko;q=0.9" },
-      timeout: 15000,
-    });
-    const jsonArticles = parseEmbeddedJson(response.data);
-    if (jsonArticles.length > 0) {
-      logger.info(`JSON 추출 성공: ${jsonArticles.length}건`);
-      return jsonArticles;
-    }
-    logger.warn("HTML 내 JSON 데이터에서 뉴스를 찾지 못했습니다.");
-  } catch (error) {
-    const errMsg = error instanceof Error ? error.message : String(error);
-    logger.error(`JSON 추출 실패: ${errMsg}`);
-  }
-
-  // ── 시도 3: 모바일 검색 ──
-  logger.info("시도 3/3: 모바일 검색 (m.search.naver.com)...");
+  // ── 시도 2: 모바일 검색 ──
+  logger.info("시도 2/2: 모바일 검색 (m.search.naver.com)...");
   const mobileArticles = await fetchAndParsePaged(
     (page) => buildMobileSearchUrl(keyword, startDate, endDate, page),
     (html) => {
@@ -676,29 +663,55 @@ async function findChromiumPath(): Promise<string | undefined> {
   return undefined;
 }
 
-/** 더벨(thebell)은 JS 렌더링 사이트 — Playwright 헤드리스 브라우저로 가져오기 */
-async function fetchThebellHtml(url: string): Promise<string | null> {
-  try {
-    const { chromium } = await import("playwright-core");
+/** 공유 Playwright 브라우저 — 기사마다 새로 띄우지 않고 재사용 (동시 추출 시 필수) */
+let sharedBrowserPromise: Promise<import("playwright-core").Browser> | null = null;
 
-    logger.info(`[더벨] Playwright 브라우저로 기사 가져오기 시도...`);
-
-    const execPath = await findChromiumPath();
-    if (execPath) {
-      logger.info(`[더벨] Chromium 경로: ${execPath}`);
+async function getSharedBrowser(): Promise<import("playwright-core").Browser> {
+  if (sharedBrowserPromise) {
+    try {
+      const existing = await sharedBrowserPromise;
+      if (existing.isConnected()) return existing;
+    } catch {
+      // 이전 실행 실패 — 아래에서 재시도
     }
+    sharedBrowserPromise = null;
+  }
 
-    const browser = await chromium.launch({
+  sharedBrowserPromise = (async () => {
+    const { chromium } = await import("playwright-core");
+    const execPath = await findChromiumPath();
+    logger.info(`[더벨] Playwright 브라우저 실행${execPath ? ` (${execPath})` : ""}...`);
+    return chromium.launch({
       headless: true,
       executablePath: execPath,
       args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
     });
+  })();
+  sharedBrowserPromise.catch(() => { sharedBrowserPromise = null; });
+  return sharedBrowserPromise;
+}
+
+export async function closeSharedBrowser(): Promise<void> {
+  if (!sharedBrowserPromise) return;
+  try {
+    const browser = await sharedBrowserPromise;
+    await browser.close();
+  } catch {
+    // 이미 닫혔거나 실행 실패
+  }
+  sharedBrowserPromise = null;
+}
+
+/** 더벨(thebell)은 JS 렌더링 사이트 — Playwright 헤드리스 브라우저로 가져오기 */
+async function fetchThebellHtml(url: string): Promise<string | null> {
+  try {
+    const browser = await getSharedBrowser();
+    const context = await browser.newContext({
+      userAgent: USER_AGENT,
+      locale: "ko-KR",
+    });
 
     try {
-      const context = await browser.newContext({
-        userAgent: USER_AGENT,
-        locale: "ko-KR",
-      });
       const page = await context.newPage();
 
       // 불필요한 리소스 차단 (속도 향상)
@@ -712,11 +725,9 @@ async function fetchThebellHtml(url: string): Promise<string | null> {
         await page.waitForSelector("#article_main, .viewSection, .articleView, #articleBody", { timeout: 10000 });
       } catch {
         // 셀렉터 대기 실패해도 현재 HTML 시도
-        logger.info(`[더벨] 본문 셀렉터 대기 타임아웃 — 현재 HTML 사용`);
       }
 
       const html = await page.content();
-      await browser.close();
 
       if (html && html.length > 2000) {
         logger.info(`[더벨] Playwright fetch 성공 (${html.length}바이트)`);
@@ -725,9 +736,8 @@ async function fetchThebellHtml(url: string): Promise<string | null> {
 
       logger.warn(`[더벨] Playwright fetch 결과 너무 짧음: ${html.length}바이트`);
       return null;
-    } catch (e) {
-      await browser.close();
-      throw e;
+    } finally {
+      await context.close().catch(() => {});
     }
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
@@ -737,6 +747,10 @@ async function fetchThebellHtml(url: string): Promise<string | null> {
       logger.warn(`[더벨] Chromium이 설치되지 않았습니다. 다음 명령어를 실행하세요:\n   npx playwright install chromium`);
     } else {
       logger.warn(`[더벨] Playwright fetch 실패: ${errMsg}`);
+    }
+    // 브라우저 연결이 끊긴 경우 다음 호출에서 재실행되도록 리셋
+    if (errMsg.includes("closed") || errMsg.includes("disconnected")) {
+      sharedBrowserPromise = null;
     }
     return null;
   }

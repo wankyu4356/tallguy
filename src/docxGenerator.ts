@@ -123,9 +123,7 @@ function createExecutiveSummary(bullets: string[]): Paragraph[] {
 
 function createArticleSection(report: ClipperReport): Paragraph[] {
   const paragraphs: Paragraph[] = [];
-  const importanceLabel = report.analysisPrompt
-    ? "중요도"
-    : "중요도";
+  const importanceLabel = "중요도";
 
   for (let i = 0; i < report.articles.length; i++) {
     const article = report.articles[i];

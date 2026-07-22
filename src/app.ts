@@ -129,6 +129,11 @@ function cleanupSessions(): void {
   for (const [id, createdAt] of sessionCreatedAt) {
     if (now - createdAt > SESSION_TTL_MS) {
       const session = sessions.get(id);
+      // 처리 중인 세션은 만료시키지 않음 (장시간 파이프라인 보호)
+      if (session && session.status === "processing") {
+        sessionCreatedAt.set(id, now);
+        continue;
+      }
       if (session) {
         // Close any lingering SSE connections
         for (const client of session.sseClients) {
@@ -306,7 +311,8 @@ function buildPageHtml(): string {
       background: var(--c-accent);
       color: #fff;
     }
-    .step-nav-item.done { color: var(--c-text-secondary); }
+    .step-nav-item.done { color: var(--c-text-secondary); cursor: pointer; }
+    .step-nav-item.done:hover { color: var(--c-primary); }
     .step-nav-connector {
       width: 32px;
       height: 2px;
@@ -440,8 +446,8 @@ function buildPageHtml(): string {
       gap: 3px;
     }
     .kw-include {
-      background: #d4edda;
-      color: #155724;
+      background: var(--c-primary-light);
+      color: var(--c-primary-dark);
       padding: 2px 8px;
       border-radius: 12px;
       font-size: 12px;
@@ -449,8 +455,8 @@ function buildPageHtml(): string {
       display: inline-block;
     }
     .kw-exclude {
-      background: #f8d7da;
-      color: #721c24;
+      background: #fdecea;
+      color: #c0392b;
       padding: 2px 8px;
       border-radius: 12px;
       font-size: 12px;
@@ -586,6 +592,7 @@ function buildPageHtml(): string {
     }
     .keyword-group.collapsed .keyword-group-body { display: none; }
     .keyword-group.collapsed .kw-toggle { transform: rotate(-90deg); }
+    .keyword-group-body { overflow-x: auto; }
 
     /* ---- Article table ---- */
     .article-controls {
@@ -635,7 +642,7 @@ function buildPageHtml(): string {
       font-weight: 500;
     }
     .article-table .col-title a:hover { text-decoration: underline; }
-    .article-table .col-title a:visited { color: #7b61a6; }
+    .article-table .col-title a:visited { color: #5e7fb8; }
     .article-table .col-kw { width: 130px; white-space: nowrap; }
     .article-table .col-press { width: 120px; color: var(--c-text-secondary); white-space: nowrap; font-size: 13px; }
     .article-table .col-date { width: 100px; color: var(--c-text-tertiary); white-space: nowrap; font-size: 13px; }
@@ -1044,7 +1051,7 @@ function buildPageHtml(): string {
     </div>
 
     <!-- Global Error -->
-    <div class="error-box" id="globalError"></div>
+    <div class="error-box" id="globalError" role="alert"></div>
 
     <!-- Section 0: Setup -->
     <div class="section" id="sectionSetup">
@@ -1202,8 +1209,11 @@ function buildPageHtml(): string {
     <div class="section" id="sectionResults">
       <div class="section-title">검색 결과</div>
       <div class="article-controls">
+        <button type="button" class="btn btn-secondary btn-sm" onclick="showSection('sectionSearch')">&larr; 검색 조건 수정</button>
         <button type="button" class="btn btn-secondary btn-sm" onclick="selectAllGroups()">전체 선택</button>
         <button type="button" class="btn btn-secondary btn-sm" onclick="deselectAllGroups()">전체 해제</button>
+        <input type="text" id="articleFilter" placeholder="제목으로 필터..." oninput="filterArticles()"
+               style="flex:1;min-width:140px;max-width:260px;padding:7px 12px;border:1.5px solid var(--c-border);border-radius:8px;font-size:13px;" />
         <span class="count" id="totalArticleCount"></span>
       </div>
       <div id="articleGroupsContainer"></div>
@@ -1219,7 +1229,7 @@ function buildPageHtml(): string {
       <div class="progress-info">
         <!-- 전체 진행률 -->
         <div style="display:flex;align-items:center;gap:14px;margin-bottom:12px;">
-          <div class="step-label" id="stepLabel" style="margin-bottom:0;flex:1;"><span class="spinner"></span>준비 중...</div>
+          <div class="step-label" id="stepLabel" aria-live="polite" style="margin-bottom:0;flex:1;"><span class="spinner"></span>준비 중...</div>
           <div id="progressPercent" style="font-size:28px;font-weight:800;color:var(--c-primary);min-width:64px;text-align:right;letter-spacing:-1px;">0%</div>
         </div>
         <div class="progress-bar-track">
@@ -1307,10 +1317,7 @@ function buildPageHtml(): string {
     }
 
     function makeKwTag(text, isExclude) {
-      if (isExclude) {
-        return '<span style="background:#ffcdd2;color:#c62828;padding:1px 6px;border-radius:10px;font-size:12px;font-weight:600;text-decoration:line-through;display:inline-block;">' + escapeHtml(text) + '</span>';
-      }
-      return '<span style="background:#c8e6c9;color:#1b5e20;padding:1px 6px;border-radius:10px;font-size:12px;font-weight:600;display:inline-block;">' + escapeHtml(text) + '</span>';
+      return '<span class="' + (isExclude ? 'kw-exclude' : 'kw-include') + '">' + escapeHtml(text) + '</span>';
     }
 
     function renderKeywordChips() {
@@ -1336,10 +1343,16 @@ function buildPageHtml(): string {
     // Utility
     // -----------------------------------------------------------------------
     function escapeHtml(str) {
-      var div = document.createElement('div');
-      div.appendChild(document.createTextNode(str));
-      return div.innerHTML;
+      return String(str == null ? '' : str).replace(/[&<>"']/g, function(c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+      });
     }
+
+    function safeUrl(u) {
+      return /^https?:\\/\\//i.test(u || '') ? u : '';
+    }
+
+    var SECTION_IDS = ['sectionSetup', 'sectionSearch', 'sectionResults', 'sectionProgress', 'sectionComplete'];
 
     function showSection(id) {
       document.querySelectorAll('.section').forEach(function(s) { s.classList.remove('active'); });
@@ -1357,7 +1370,20 @@ function buildPageHtml(): string {
       connectors.forEach(function(c, i) {
         c.classList.toggle('done', i < currentStep);
       });
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     }
+
+    // 완료된 스텝을 클릭하면 이전 단계로 이동 (진행 중에는 잠금)
+    document.querySelectorAll('.step-nav-item').forEach(function(item) {
+      item.addEventListener('click', function() {
+        var target = parseInt(item.dataset.step, 10);
+        if (isNaN(target) || target > 2) return;
+        if (!item.classList.contains('done')) return;
+        if (document.getElementById('sectionProgress').classList.contains('active')) return;
+        if (target === 2 && !currentSessionId) return;
+        showSection(SECTION_IDS[target]);
+      });
+    });
 
     function showError(msg) {
       var el = document.getElementById('globalError');
@@ -1442,6 +1468,15 @@ function buildPageHtml(): string {
       var checked = document.querySelectorAll('.article-cb:checked').length;
       var total = document.querySelectorAll('.article-cb').length;
       document.getElementById('totalArticleCount').textContent = '선택: ' + checked + ' / ' + total + '건';
+      // 그룹 헤더 체크박스를 개별 선택 상태와 동기화
+      document.querySelectorAll('.keyword-group').forEach(function(group) {
+        var headerCb = group.querySelector('thead input[type="checkbox"]');
+        if (!headerCb) return;
+        var cbs = group.querySelectorAll('.article-cb');
+        var sel = group.querySelectorAll('.article-cb:checked').length;
+        headerCb.checked = sel === cbs.length && cbs.length > 0;
+        headerCb.indeterminate = sel > 0 && sel < cbs.length;
+      });
     }
 
     // -----------------------------------------------------------------------
@@ -1456,7 +1491,7 @@ function buildPageHtml(): string {
       var checked = emailEnabled ? 'checked' : '';
       area.innerHTML =
         '<div class="email-toggle">' +
-        '  <label><input type="checkbox" id="emailCheck" ' + checked + ' onchange="emailEnabled=this.checked;localStorage.setItem(\\'emailEnabled\\',this.checked)" style="width:18px;height:18px;accent-color:#03c75a;" /> 완료 시 메일로 발송</label>' +
+        '  <label><input type="checkbox" id="emailCheck" ' + checked + ' onchange="emailEnabled=this.checked;localStorage.setItem(\\'emailEnabled\\',this.checked)" style="width:18px;height:18px;accent-color:var(--c-primary);" /> 완료 시 메일로 발송</label>' +
         '  <span class="email-to">' + escapeHtml(emailTo) + '</span>' +
         '</div>';
     }
@@ -1560,7 +1595,7 @@ function buildPageHtml(): string {
       periodDiv.innerHTML = '<strong>기준기간:</strong> ' + _s.replace(/-/g,'.') + ' ~ ' + _e.replace(/-/g,'.') + ' (' + days + '일)';
       container.appendChild(periodDiv);
 
-      keywords.forEach(function(kw) {
+      keywords.forEach(function(kw, gi) {
         var articles = articlesByKeyword[kw] || [];
         if (articles.length === 0) return;
 
@@ -1586,8 +1621,8 @@ function buildPageHtml(): string {
           '<span class="kw-name" style="display:inline-flex;gap:4px;align-items:center;">' + kwTagsHtml + '</span>' +
           '<span class="kw-count">' + articles.length + '건</span>' +
           '<span class="kw-actions">' +
-          '  <button type="button" class="btn btn-sm btn-secondary" onclick="event.stopPropagation();selectGroup(\\'' + escapeHtml(kw).replace(/'/g, "\\\\'") + '\\')">선택</button>' +
-          '  <button type="button" class="btn btn-sm btn-secondary" onclick="event.stopPropagation();deselectGroup(\\'' + escapeHtml(kw).replace(/'/g, "\\\\'") + '\\')">해제</button>' +
+          '  <button type="button" class="btn btn-sm btn-secondary" onclick="event.stopPropagation();selectGroup(' + gi + ')">선택</button>' +
+          '  <button type="button" class="btn btn-sm btn-secondary" onclick="event.stopPropagation();deselectGroup(' + gi + ')">해제</button>' +
           '</span>';
         header.onclick = function() { group.classList.toggle('collapsed'); };
 
@@ -1599,7 +1634,7 @@ function buildPageHtml(): string {
         table.className = 'article-table';
         table.innerHTML =
           '<thead><tr>' +
-          '<th class="col-check"><input type="checkbox" checked onchange="toggleGroup(this, \\'' + escapeHtml(kw).replace(/'/g, "\\\\'") + '\\')" /></th>' +
+          '<th class="col-check"><input type="checkbox" checked onchange="toggleGroup(this, ' + gi + ')" /></th>' +
           '<th class="col-idx">#</th>' +
           '<th class="col-kw">키워드</th>' +
           '<th>기사 제목</th>' +
@@ -1610,7 +1645,7 @@ function buildPageHtml(): string {
         var tbody = document.createElement('tbody');
         articles.forEach(function(a, i) {
           var tr = document.createElement('tr');
-          var link = a.naverLink || a.originalLink;
+          var link = safeUrl(a.naverLink || a.originalLink);
 
           // 키워드별 문맥: 포함 키워드 각각에 대해 context 추출
           var contextHtml = '';
@@ -1631,11 +1666,14 @@ function buildPageHtml(): string {
             cellKwHtml += makeKwTag(t, true) + ' ';
           });
 
+          var titleHtml = link
+            ? '<a href="' + escapeHtml(link) + '" target="_blank" rel="noopener">' + escapeHtml(a.title) + '</a>'
+            : escapeHtml(a.title);
           tr.innerHTML =
-            '<td class="col-check"><input type="checkbox" class="article-cb" data-keyword="' + escapeHtml(kw) + '" data-index="' + i + '" checked onchange="updateTotalCount()" /></td>' +
+            '<td class="col-check"><input type="checkbox" class="article-cb" data-keyword="' + escapeHtml(kw) + '" data-group="' + gi + '" data-index="' + i + '" checked onchange="updateTotalCount()" /></td>' +
             '<td class="col-idx">' + (i + 1) + '</td>' +
             '<td class="col-kw">' + cellKwHtml + '</td>' +
-            '<td class="col-title"><a href="' + escapeHtml(link) + '" target="_blank" rel="noopener">' + escapeHtml(a.title) + '</a>' + contextHtml + '</td>' +
+            '<td class="col-title">' + titleHtml + contextHtml + '</td>' +
             '<td class="col-press">' + escapeHtml(a.press) + '</td>' +
             '<td class="col-date">' + escapeHtml(a.date) + '</td>';
 
@@ -1652,19 +1690,33 @@ function buildPageHtml(): string {
       updateTotalCount();
     }
 
-    function selectGroup(kw) {
-      document.querySelectorAll('.article-cb[data-keyword="' + kw + '"]').forEach(function(cb) { cb.checked = true; });
+    function selectGroup(gi) {
+      document.querySelectorAll('.article-cb[data-group="' + gi + '"]').forEach(function(cb) { cb.checked = true; });
       updateTotalCount();
     }
 
-    function deselectGroup(kw) {
-      document.querySelectorAll('.article-cb[data-keyword="' + kw + '"]').forEach(function(cb) { cb.checked = false; });
+    function deselectGroup(gi) {
+      document.querySelectorAll('.article-cb[data-group="' + gi + '"]').forEach(function(cb) { cb.checked = false; });
       updateTotalCount();
     }
 
-    function toggleGroup(headerCb, kw) {
-      document.querySelectorAll('.article-cb[data-keyword="' + kw + '"]').forEach(function(cb) { cb.checked = headerCb.checked; });
+    function toggleGroup(headerCb, gi) {
+      document.querySelectorAll('.article-cb[data-group="' + gi + '"]').forEach(function(cb) { cb.checked = headerCb.checked; });
       updateTotalCount();
+    }
+
+    function filterArticles() {
+      var q = (document.getElementById('articleFilter').value || '').trim().toLowerCase();
+      document.querySelectorAll('.keyword-group').forEach(function(group) {
+        var visible = 0;
+        group.querySelectorAll('tbody tr').forEach(function(tr) {
+          var titleCell = tr.querySelector('.col-title');
+          var match = !q || (titleCell && titleCell.textContent.toLowerCase().indexOf(q) !== -1);
+          tr.style.display = match ? '' : 'none';
+          if (match) visible++;
+        });
+        group.style.display = visible > 0 ? '' : 'none';
+      });
     }
 
     function selectAllGroups() {
@@ -1808,9 +1860,21 @@ function buildPageHtml(): string {
         }
       };
 
+      var sseErrorCount = 0;
       eventSource.onerror = function() {
-        // SSE connection lost — do not close immediately; browser will retry
+        sseErrorCount++;
+        // 브라우저가 자동 재연결을 시도하지만, 계속 실패하면 사용자에게 알림
+        if (sseErrorCount >= 5) {
+          if (eventSource) { eventSource.close(); eventSource = null; }
+          document.getElementById('stepLabel').textContent = '연결 끊김';
+          showError('서버와의 연결이 끊어졌습니다. 서버가 실행 중인지 확인 후 다시 시도해주세요.');
+          var btn = document.getElementById('processBtn');
+          btn.disabled = false;
+          btn.textContent = '선택 완료 및 분석 시작';
+          showSection('sectionResults');
+        }
       };
+      eventSource.onopen = function() { sseErrorCount = 0; };
     }
 
     function appendLog(level, message, timestamp) {
@@ -1858,6 +1922,13 @@ function buildPageHtml(): string {
       document.getElementById('globalError').classList.remove('visible');
       document.getElementById('processBtn').disabled = false;
       document.getElementById('processBtn').textContent = '선택 완료 및 분석 시작';
+      // 이전 실행 상태 정리
+      document.getElementById('articleGroupsContainer').innerHTML = '';
+      document.getElementById('logArea').innerHTML = '';
+      document.getElementById('searchLogArea').innerHTML = '';
+      document.getElementById('searchLogArea').style.display = 'none';
+      var filterEl = document.getElementById('articleFilter');
+      if (filterEl) filterEl.value = '';
       showSection('sectionSearch');
     }
 
@@ -2091,9 +2162,12 @@ export function createApp(claudeModel: string): { app: express.Express } {
         "EMAIL_FROM", "EMAIL_TO",
       ];
 
+      // 개행 문자 제거 — .env 라인 인젝션 방지
+      const sanitize = (v: string) => v.replace(/[\r\n]/g, "").trim();
+
       const lines: string[] = [];
       for (const key of envKeys) {
-        const val = body[key] || process.env[key] || "";
+        const val = sanitize(String(body[key] || process.env[key] || ""));
         if (val) lines.push(`${key}=${val}`);
       }
 
@@ -2101,7 +2175,7 @@ export function createApp(claudeModel: string): { app: express.Express } {
 
       // 환경변수 즉시 반영
       for (const key of envKeys) {
-        if (body[key]) process.env[key] = body[key];
+        if (body[key]) process.env[key] = sanitize(String(body[key]));
       }
 
       logger.info("설정이 저장되었습니다.");
@@ -2350,19 +2424,22 @@ export function createApp(claudeModel: string): { app: express.Express } {
       res.write(`data: ${payload}\n\n`);
     }
 
-    // If already done, send completion immediately
+    // 이미 종료된 세션이면 종료 이벤트만 보내고 연결을 닫는다 (연결 누수 방지)
     if (session.status === "done" && session.outputPath) {
       const filename = path.basename(session.outputPath);
       res.write(
         `data: ${JSON.stringify({ type: "done", filename })}\n\n`,
       );
+      res.end();
+      return;
     }
 
-    // If errored, send error immediately
     if (session.status === "error") {
       res.write(
         `data: ${JSON.stringify({ type: "error", message: "처리 중 오류가 발생했습니다." })}\n\n`,
       );
+      res.end();
+      return;
     }
 
     session.sseClients.add(res);

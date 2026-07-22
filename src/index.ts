@@ -1,7 +1,22 @@
 import { getConfig } from "./config.js";
 import { createApp } from "./app.js";
 import { logger } from "./logger.js";
+import { closeSharedBrowser } from "./scraper.js";
 import open from "open";
+
+// 예기치 못한 오류로 서버가 죽지 않도록 방어
+process.on("unhandledRejection", (reason) => {
+  logger.error(`처리되지 않은 Promise 오류: ${reason instanceof Error ? reason.message : String(reason)}`);
+});
+process.on("uncaughtException", (err) => {
+  logger.error(`처리되지 않은 예외: ${err.message}`);
+});
+
+for (const sig of ["SIGINT", "SIGTERM"] as const) {
+  process.on(sig, () => {
+    closeSharedBrowser().finally(() => process.exit(0));
+  });
+}
 
 const config = getConfig();
 const { app } = createApp(config.claudeModel);
