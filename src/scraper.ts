@@ -687,6 +687,9 @@ async function findChromiumPath(): Promise<string | undefined> {
 
   // 1) ms-playwright 캐시에서 찾기
   const cacheDirs: string[] = [];
+  if (process.env.PLAYWRIGHT_BROWSERS_PATH && process.env.PLAYWRIGHT_BROWSERS_PATH !== "0") {
+    cacheDirs.push(process.env.PLAYWRIGHT_BROWSERS_PATH);
+  }
   if (platform === "win32") {
     // Windows: %LOCALAPPDATA%\ms-playwright
     const localAppData = process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local");
@@ -750,10 +753,13 @@ async function getSharedBrowser(): Promise<import("playwright-core").Browser> {
   sharedBrowserPromise = (async () => {
     const { chromium } = await import("playwright-core");
     const execPath = await findChromiumPath();
-    logger.info(`[더벨] Playwright 브라우저 실행${execPath ? ` (${execPath})` : ""}...`);
+    logger.info(`[Playwright] 브라우저 실행${execPath ? ` (${execPath})` : ""}...`);
+    // 프록시 환경(HTTPS_PROXY) 지원 — 일반 PC에서는 미설정이라 영향 없음
+    const proxyServer = process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
     return chromium.launch({
       headless: true,
       executablePath: execPath,
+      proxy: proxyServer ? { server: proxyServer } : undefined,
       args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
     });
   })();
@@ -772,13 +778,14 @@ export async function closeSharedBrowser(): Promise<void> {
   sharedBrowserPromise = null;
 }
 
-/** 더벨(thebell)은 JS 렌더링 사이트 — Playwright 헤드리스 브라우저로 가져오기 */
-async function fetchThebellHtml(url: string): Promise<string | null> {
+/** Playwright 헤드리스 브라우저로 페이지 가져오기 (JS 렌더링 사이트, 봇 차단 403 사이트 대응) */
+async function fetchViaPlaywright(url: string, waitSelector?: string): Promise<string | null> {
   try {
     const browser = await getSharedBrowser();
     const context = await browser.newContext({
       userAgent: USER_AGENT,
       locale: "ko-KR",
+      ignoreHTTPSErrors: true,
     });
 
     try {
@@ -790,21 +797,22 @@ async function fetchThebellHtml(url: string): Promise<string | null> {
 
       await page.goto(url, { waitUntil: "domcontentloaded", timeout: 20000 });
 
-      // 더벨 기사 본문이 로드될 때까지 대기
-      try {
-        await page.waitForSelector("#article_main, .viewSection, .articleView, #articleBody", { timeout: 10000 });
-      } catch {
-        // 셀렉터 대기 실패해도 현재 HTML 시도
+      if (waitSelector) {
+        try {
+          await page.waitForSelector(waitSelector, { timeout: 10000 });
+        } catch {
+          // 셀렉터 대기 실패해도 현재 HTML 시도
+        }
       }
 
       const html = await page.content();
 
       if (html && html.length > 2000) {
-        logger.info(`[더벨] Playwright fetch 성공 (${html.length}바이트)`);
+        logger.info(`[Playwright] fetch 성공: ${url} (${html.length}바이트)`);
         return html;
       }
 
-      logger.warn(`[더벨] Playwright fetch 결과 너무 짧음: ${html.length}바이트`);
+      logger.warn(`[Playwright] fetch 결과 너무 짧음: ${html.length}바이트 (${url})`);
       return null;
     } finally {
       await context.close().catch(() => {});
@@ -812,11 +820,11 @@ async function fetchThebellHtml(url: string): Promise<string | null> {
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
     if (errMsg.includes("Cannot find package") || errMsg.includes("MODULE_NOT_FOUND")) {
-      logger.warn(`[더벨] playwright-core 패키지가 설치되지 않았습니다. 더벨 기사 본문을 가져오려면:\n   npm install playwright-core\n   npx playwright install chromium`);
+      logger.warn(`[Playwright] playwright-core 패키지가 설치되지 않았습니다:\n   npm install playwright-core\n   npx playwright install chromium`);
     } else if (errMsg.includes("Executable doesn't exist")) {
-      logger.warn(`[더벨] Chromium이 설치되지 않았습니다. 다음 명령어를 실행하세요:\n   npx playwright install chromium`);
+      logger.warn(`[Playwright] Chromium이 설치되지 않았습니다. 다음 명령어를 실행하세요:\n   npx playwright install chromium`);
     } else {
-      logger.warn(`[더벨] Playwright fetch 실패: ${errMsg}`);
+      logger.warn(`[Playwright] fetch 실패 (${url}): ${errMsg}`);
     }
     // 브라우저 연결이 끊긴 경우 다음 호출에서 재실행되도록 리셋
     if (errMsg.includes("closed") || errMsg.includes("disconnected")) {
@@ -829,7 +837,7 @@ async function fetchThebellHtml(url: string): Promise<string | null> {
 export async function fetchArticleHtml(url: string): Promise<string> {
   // 더벨 전용 처리 (JS 렌더링 필수)
   if (url.includes("thebell.co.kr")) {
-    const thebellHtml = await fetchThebellHtml(url);
+    const thebellHtml = await fetchViaPlaywright(url, "#article_main, .viewSection, .articleView, #articleBody");
     if (thebellHtml) return thebellHtml;
     // Playwright 실패 시 일반 HTTP도 불가하므로 바로 throw
     throw new Error(`더벨 기사 fetch 실패 (Playwright 필요 — npx playwright install chromium 실행 필요): ${url}`);
@@ -895,6 +903,10 @@ export async function fetchArticleHtml(url: string): Promise<string> {
       logger.warn(`[본문 fetch] ${url} → 오류 (시도 ${i + 1}/${headerSets.length}): ${errMsg}`);
     }
   }
+
+  // 일반 HTTP가 모두 실패 (403 봇 차단 등) → Playwright 브라우저로 마지막 시도
+  const pwHtml = await fetchViaPlaywright(url);
+  if (pwHtml) return pwHtml;
 
   throw new Error(`모든 fetch 시도 실패: ${url}`);
 }

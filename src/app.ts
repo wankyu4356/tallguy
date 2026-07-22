@@ -1068,7 +1068,7 @@ function buildPageHtml(): string {
         </div>
         <div class="form-group">
           <label for="setupClaudeModel">Claude 모델</label>
-          <input type="text" id="setupClaudeModel" value="" placeholder="claude-opus-4-6"
+          <input type="text" id="setupClaudeModel" value="" placeholder="claude-sonnet-5"
                  style="font-family:monospace;" />
         </div>
         <div class="form-group">
@@ -2706,14 +2706,18 @@ async function runPipeline(
             folder.file("00_Executive_Summary.docx", sumBuf);
           }
 
-          // 기사마다 개별 DOCX (중요도 순 번호)
+          // 기사마다 개별 DOCX — 파일명: 기사날짜_번호_제목.docx
+          const articleDateStr = (d: string): string => {
+            const m = String(d || "").match(/(\d{4})[.\-\/년\s]*(\d{1,2})[.\-\/월\s]*(\d{1,2})/);
+            return m ? `${m[1]}${m[2].padStart(2, "0")}${m[3].padStart(2, "0")}` : "00000000";
+          };
           for (let i = 0; i < rankedByKw[k].length; i++) {
             fileCount++;
             const art = rankedByKw[k][i];
             broadcastDetailProgress(4, "기사별 DOCX 생성", fileCount, totalFiles + 1, art.title);
             const buf = await generateSingleArticleDocx(art, kwEntries[k].label);
             const titlePart = sanitizeFilename(art.title).slice(0, 50).trim() || "기사";
-            folder.file(`${String(i + 1).padStart(3, "0")}_${titlePart}.docx`, buf);
+            folder.file(`${articleDateStr(art.publishDate)}_${String(i + 1).padStart(3, "0")}_${titlePart}.docx`, buf);
           }
         }
 

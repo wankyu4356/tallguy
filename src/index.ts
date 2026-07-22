@@ -47,7 +47,7 @@ const server = app.listen(config.port, () => {
   console.log();
   console.log("  ─── 환경 설정 (.env) ─────────────────────────────────");
   console.log("  ANTHROPIC_API_KEY   Claude API 키 (필수)");
-  console.log("  CLAUDE_MODEL        모델명 (기본: claude-opus-4-6)");
+  console.log("  CLAUDE_MODEL        모델명 (기본: claude-sonnet-5)");
   console.log("  NAVER_CLIENT_ID     네이버 API Client ID (권장)");
   console.log("  NAVER_CLIENT_SECRET 네이버 API Client Secret (권장)");
   console.log();

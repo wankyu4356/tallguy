@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { ArticleDetail, RankedArticle, SearchArticle } from "./types.js";
 import type { ProgressCallback } from "./extractor.js";
+import { claudeCreate } from "./claudeHelper.js";
 
 const BATCH_SIZE = 30;
 const DEDUP_BATCH_SIZE = 100;
@@ -40,7 +41,7 @@ export async function filterDuplicates(
     }));
 
     try {
-      const response = await claude.messages.create({
+      const response = await claudeCreate(claude, {
         model,
         max_tokens: 4096,
         messages: [
@@ -137,7 +138,7 @@ export async function rankByImportance(
 각 기사의 중요도를 1(가장 중요)부터 매겨주세요. 동일 중요도 가능합니다.`;
       }
 
-      const response = await claude.messages.create({
+      const response = await claudeCreate(claude, {
         model,
         max_tokens: 4096,
         messages: [
@@ -221,7 +222,7 @@ export async function generateExecutiveSummary(
 
   // Issue 4: Claude API 에러 핸들링
   try {
-    const response = await claude.messages.create({
+    const response = await claudeCreate(claude, {
       model,
       max_tokens: 2048,
       messages: [

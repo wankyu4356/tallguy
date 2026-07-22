@@ -3,6 +3,7 @@ import * as cheerio from "cheerio";
 import type { CheerioAPI } from "cheerio";
 import { fetchArticleHtml } from "./scraper.js";
 import type { ArticleDetail, SearchArticle } from "./types.js";
+import { claudeCreate } from "./claudeHelper.js";
 
 // Issue 13: cheerio를 한 번만 파싱하여 재사용
 function parseHtml(html: string): CheerioAPI {
@@ -270,7 +271,10 @@ export async function extractArticleDetail(
   const truncatedText = textContent.slice(0, 30000);
 
   // Claude를 통해 기사 내용 정확히 추출 (누락 없이)
-  const response = await claude.messages.create({
+  // LLM 호출이 실패해도 이미 추출한 본문 텍스트는 버리지 않는다
+  let response;
+  try {
+    response = await claudeCreate(claude, {
     model,
     // Issue 6: max_tokens 8192로 증가
     max_tokens: 8192,
@@ -291,9 +295,20 @@ export async function extractArticleDetail(
 
 웹페이지 텍스트:
 ${truncatedText}`,
-      },
-    ],
-  });
+        },
+      ],
+    });
+  } catch {
+    // Claude 정리 실패 → 파싱된 원문 텍스트 그대로 사용
+    return {
+      title: meta.title || article.title,
+      publishDate: meta.date || article.date,
+      reporter: meta.reporter || "알 수 없음",
+      press: meta.press || article.press,
+      body: textContent.slice(0, 30000),
+      link: url,
+    };
+  }
 
   try {
     const text = response.content[0].type === "text" ? response.content[0].text : "";
@@ -363,7 +378,9 @@ export async function extractAllArticles(
           publishDate: article.date,
           reporter: "알 수 없음",
           press: article.press,
-          body: "[추출 실패]",
+          body: article.summary && article.summary.length > 20
+            ? article.summary
+            : "[추출 실패]",
           link: article.naverLink || article.originalLink,
         };
       }
