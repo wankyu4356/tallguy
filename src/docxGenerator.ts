@@ -81,6 +81,7 @@ function createTitlePage(report: ClipperReport): Paragraph[] {
 }
 
 function createExecutiveSummary(bullets: string[]): Paragraph[] {
+  if (bullets.length === 0) return [];
   const paragraphs: Paragraph[] = [
     new Paragraph({
       children: [new PageBreak()],
@@ -171,27 +172,29 @@ function createArticleSection(report: ClipperReport): Paragraph[] {
       }),
     );
 
-    // 중요도
-    paragraphs.push(
-      new Paragraph({
-        spacing: { after: 60 },
-        children: [
-          new TextRun({
-            text: `${importanceLabel}: ${article.importance}위`,
-            bold: true,
-            size: 20,
-            font: "맑은 고딕",
-            color: "E74C3C",
-          }),
-          new TextRun({
-            text: ` — ${article.importanceReason}`,
-            size: 20,
-            font: "맑은 고딕",
-            color: "888888",
-          }),
-        ],
-      }),
-    );
+    // 중요도 (정렬 단계를 건너뛴 경우 importance가 0 — 표시 생략)
+    if (article.importance > 0) {
+      paragraphs.push(
+        new Paragraph({
+          spacing: { after: 60 },
+          children: [
+            new TextRun({
+              text: `${importanceLabel}: ${article.importance}위`,
+              bold: true,
+              size: 20,
+              font: "맑은 고딕",
+              color: "E74C3C",
+            }),
+            new TextRun({
+              text: ` — ${article.importanceReason}`,
+              size: 20,
+              font: "맑은 고딕",
+              color: "888888",
+            }),
+          ],
+        }),
+      );
+    }
 
     // 링크
     paragraphs.push(

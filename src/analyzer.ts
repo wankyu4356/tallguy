@@ -1,8 +1,84 @@
 import Anthropic from "@anthropic-ai/sdk";
-import type { ArticleDetail, RankedArticle } from "./types.js";
+import type { ArticleDetail, RankedArticle, SearchArticle } from "./types.js";
 import type { ProgressCallback } from "./extractor.js";
 
 const BATCH_SIZE = 30;
+const DEDUP_BATCH_SIZE = 100;
+
+/** LLM으로 같은 사건을 다룬 중복 기사를 걸러낸다 (각 그룹에서 대표 1건만 유지) */
+export async function filterDuplicates(
+  articles: SearchArticle[],
+  claude: Anthropic,
+  model: string,
+  onProgress?: ProgressCallback,
+): Promise<SearchArticle[]> {
+  if (articles.length < 2) return articles;
+
+  console.log(`🔍 중복 기사 선별 중... (${articles.length}건)`);
+
+  // 제목 기준 정렬 → 유사 기사가 같은 배치에 묶이도록
+  const indexed = articles.map((a, i) => ({ a, i }));
+  indexed.sort((x, y) => x.a.title.localeCompare(y.a.title, "ko"));
+
+  const batches: { a: SearchArticle; i: number }[][] = [];
+  for (let i = 0; i < indexed.length; i += DEDUP_BATCH_SIZE) {
+    batches.push(indexed.slice(i, i + DEDUP_BATCH_SIZE));
+  }
+
+  const removeSet = new Set<number>();
+
+  for (let batchIdx = 0; batchIdx < batches.length; batchIdx++) {
+    const batch = batches[batchIdx];
+    onProgress?.(batchIdx + 1, batches.length, `중복 검사 배치 ${batchIdx + 1}/${batches.length}`);
+
+    const list = batch.map((item, localIdx) => ({
+      id: localIdx,
+      title: item.a.title,
+      press: item.a.press,
+      date: item.a.date,
+      summary: (item.a.summary || "").slice(0, 150),
+    }));
+
+    try {
+      const response = await claude.messages.create({
+        model,
+        max_tokens: 4096,
+        messages: [
+          {
+            role: "user",
+            content: `아래 뉴스 기사 목록에서 "같은 사건/내용"을 다룬 중복 기사를 찾아주세요.
+같은 사건을 여러 언론사가 보도한 경우도 중복입니다. 각 중복 그룹에서 가장 상세해 보이는 기사 1건만 남기고 나머지는 제거 대상입니다.
+단순히 주제가 비슷한 것만으로는 중복이 아닙니다. 확실한 경우만 제거하세요.
+
+반드시 아래 JSON 형식으로만 응답하세요 (제거할 기사의 id 배열, 없으면 빈 배열):
+{ "remove": [3, 7, 12] }
+
+기사 목록:
+${JSON.stringify(list, null, 2)}`,
+          },
+        ],
+      });
+
+      const text = response.content[0].type === "text" ? response.content[0].text : "";
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]) as { remove?: number[] };
+        for (const localIdx of parsed.remove || []) {
+          if (typeof localIdx === "number" && localIdx >= 0 && localIdx < batch.length) {
+            removeSet.add(batch[localIdx].i);
+          }
+        }
+      }
+    } catch (error) {
+      // 실패한 배치는 제거 없이 통과
+      console.error(`\n   ⚠️  중복 검사 실패 (배치 ${batchIdx + 1}): ${error instanceof Error ? error.message : error}`);
+    }
+  }
+
+  const filtered = articles.filter((_, i) => !removeSet.has(i));
+  console.log(`   ✅ 중복 ${articles.length - filtered.length}건 제거 (${articles.length} → ${filtered.length})\n`);
+  return filtered;
+}
 
 export async function rankByImportance(
   articles: ArticleDetail[],

@@ -6,7 +6,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import nodemailer from "nodemailer";
 import { scrapeNaverNews, type SearchMethod } from "./scraper.js";
 import { extractAllArticles } from "./extractor.js";
-import { rankByImportance, generateExecutiveSummary } from "./analyzer.js";
+import { rankByImportance, generateExecutiveSummary, filterDuplicates } from "./analyzer.js";
 import { generateDocx } from "./docxGenerator.js";
 import { logger } from "./logger.js";
 import { isSetupComplete } from "./config.js";
@@ -32,6 +32,9 @@ interface SessionData {
   sseClients: Set<express.Response>;
   logs: Array<{ level: string; message: string; timestamp: string }>;
   sendEmail?: boolean;
+  useRanking?: boolean;
+  useSummary?: boolean;
+  useDedup?: boolean;
 }
 
 const sessions = new Map<string, SessionData>();
@@ -1165,6 +1168,21 @@ function buildPageHtml(): string {
             </label>
           </div>
         </div>
+        <div class="form-group">
+          <label>AI 분석 옵션</label>
+          <div style="display:flex;gap:16px;margin-top:4px;flex-wrap:wrap;">
+            <label style="display:flex;align-items:center;gap:6px;font-weight:400;cursor:pointer;">
+              <input type="checkbox" id="optDedup" checked style="width:16px;height:16px;accent-color:var(--c-primary);" /> 중복 기사 제거
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;font-weight:400;cursor:pointer;">
+              <input type="checkbox" id="optRanking" checked style="width:16px;height:16px;accent-color:var(--c-primary);" /> 중요도 정렬
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;font-weight:400;cursor:pointer;">
+              <input type="checkbox" id="optSummary" checked style="width:16px;height:16px;accent-color:var(--c-primary);" /> Executive Summary
+            </label>
+          </div>
+          <div class="hint">AI(LLM)를 사용하는 단계입니다. 체크를 해제하면 해당 단계를 건너뛰어 처리 속도가 빨라집니다.</div>
+        </div>
         <div id="emailToggleArea"></div>
         <button type="submit" class="btn btn-primary" id="searchBtn">검색 시작</button>
       </form>
@@ -1685,7 +1703,13 @@ function buildPageHtml(): string {
         var res = await fetch('/api/process', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sessionId: currentSessionId, selectedByKeyword: selectedByKeyword })
+          body: JSON.stringify({
+            sessionId: currentSessionId,
+            selectedByKeyword: selectedByKeyword,
+            useDedup: document.getElementById('optDedup').checked,
+            useRanking: document.getElementById('optRanking').checked,
+            useSummary: document.getElementById('optSummary').checked
+          })
         });
         var data = await res.json();
         if (!res.ok) { throw new Error(data.error || '처리 시작 실패'); }
@@ -2224,9 +2248,12 @@ export function createApp(claudeModel: string): { app: express.Express } {
   // -------------------------------------------------------------------------
   app.post("/api/process", (req, res) => {
     try {
-      const { sessionId, selectedByKeyword } = req.body as {
+      const { sessionId, selectedByKeyword, useRanking, useSummary, useDedup } = req.body as {
         sessionId: unknown;
         selectedByKeyword: unknown;
+        useRanking?: unknown;
+        useSummary?: unknown;
+        useDedup?: unknown;
       };
 
       if (typeof sessionId !== "string" || !sessions.has(sessionId)) {
@@ -2271,6 +2298,9 @@ export function createApp(claudeModel: string): { app: express.Express } {
       }
 
       session.selectedArticles = selected;
+      session.useRanking = useRanking !== false;
+      session.useSummary = useSummary !== false;
+      session.useDedup = useDedup !== false;
       session.status = "processing";
 
       // Return immediately
@@ -2390,7 +2420,7 @@ async function runPipeline(
   claudeModel: string,
 ): Promise<void> {
   const totalSteps = session.sendEmail ? 5 : 4;
-  const selectedArticles = session.selectedArticles!;
+  let selectedArticles = session.selectedArticles!;
   const keywords = session.keywords;
   const keywordStr = keywords.join(", ");
 
@@ -2442,6 +2472,32 @@ async function runPipeline(
     }
 
     try {
+      // Step 1a: (옵션) LLM 중복 기사 제거
+      if (session.useDedup !== false && selectedArticles.length > 1) {
+        sessionProgress(
+          session,
+          1,
+          totalSteps,
+          `중복 기사 선별 중... (${selectedArticles.length}건)`,
+        );
+        const beforeCount = selectedArticles.length;
+        selectedArticles = await filterDuplicates(
+          selectedArticles,
+          claude,
+          claudeModel,
+          (current, total, itemName) => {
+            broadcastDetailProgress(1, "중복 기사 선별", 0, 1, itemName);
+          },
+        );
+        if (beforeCount !== selectedArticles.length) {
+          sessionLog(
+            session,
+            "info",
+            `중복 기사 ${beforeCount - selectedArticles.length}건 제거 (${beforeCount} → ${selectedArticles.length})`,
+          );
+        }
+      }
+
       // Step 1: Extract article bodies
       sessionProgress(
         session,
@@ -2458,39 +2514,56 @@ async function runPipeline(
         },
       );
 
-      // Step 2: Rank by importance
-      const analysisLabel = session.analysisPrompt ? "기사 분석·정렬" : "중요도 분석";
-      sessionProgress(
-        session,
-        2,
-        totalSteps,
-        `${analysisLabel} 중...`,
-      );
-      const rankedArticles = await rankByImportance(
-        articleDetails,
-        claude,
-        claudeModel,
-        session.analysisPrompt,
-        (current, total, itemName) => {
-          broadcastDetailProgress(2, analysisLabel, current, total, itemName);
-        },
-      );
+      // Step 2: Rank by importance (옵션)
+      let rankedArticles: RankedArticle[];
+      if (session.useRanking !== false) {
+        const analysisLabel = session.analysisPrompt ? "기사 분석·정렬" : "중요도 분석";
+        sessionProgress(
+          session,
+          2,
+          totalSteps,
+          `${analysisLabel} 중...`,
+        );
+        rankedArticles = await rankByImportance(
+          articleDetails,
+          claude,
+          claudeModel,
+          session.analysisPrompt,
+          (current, total, itemName) => {
+            broadcastDetailProgress(2, analysisLabel, current, total, itemName);
+          },
+        );
+      } else {
+        sessionLog(session, "info", "중요도 정렬 단계 건너뜀 (옵션 해제)");
+        broadcastDetailProgress(2, "중요도 분석 건너뜀", 1, 1, "");
+        rankedArticles = articleDetails.map((a) => ({
+          ...a,
+          importance: 0,
+          importanceReason: "",
+        }));
+      }
 
-      // Step 3: Generate executive summary
-      sessionProgress(
-        session,
-        3,
-        totalSteps,
-        "Executive Summary 생성 중...",
-      );
-      broadcastDetailProgress(3, "Executive Summary 생성", 1, 1, "AI 분석 중...");
-      const executiveSummary = await generateExecutiveSummary(
-        rankedArticles,
-        keywordStr,
-        claude,
-        claudeModel,
-        session.analysisPrompt,
-      );
+      // Step 3: Generate executive summary (옵션)
+      let executiveSummary: string[] = [];
+      if (session.useSummary !== false) {
+        sessionProgress(
+          session,
+          3,
+          totalSteps,
+          "Executive Summary 생성 중...",
+        );
+        broadcastDetailProgress(3, "Executive Summary 생성", 1, 1, "AI 분석 중...");
+        executiveSummary = await generateExecutiveSummary(
+          rankedArticles,
+          keywordStr,
+          claude,
+          claudeModel,
+          session.analysisPrompt,
+        );
+      } else {
+        sessionLog(session, "info", "Executive Summary 단계 건너뜀 (옵션 해제)");
+        broadcastDetailProgress(3, "Executive Summary 건너뜀", 1, 1, "");
+      }
 
       // Step 4: Generate DOCX
       sessionProgress(session, 4, totalSteps, "DOCX 리포트 생성 중...");
