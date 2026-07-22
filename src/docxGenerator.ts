@@ -9,13 +9,13 @@ import {
   PageBreak,
 } from "docx";
 import fs from "fs";
-import type { ClipperReport } from "./types.js";
+import type { ClipperReport, RankedArticle } from "./types.js";
 
 function createTitlePage(report: ClipperReport): Paragraph[] {
   const today = new Date();
   const dateStr = `${today.getFullYear()}년 ${today.getMonth() + 1}월 ${today.getDate()}일`;
 
-  return [
+  const paragraphs = [
     new Paragraph({ spacing: { before: 3000 } }),
     new Paragraph({
       alignment: AlignmentType.CENTER,
@@ -66,18 +66,25 @@ function createTitlePage(report: ClipperReport): Paragraph[] {
         }),
       ],
     }),
-    new Paragraph({
-      alignment: AlignmentType.CENTER,
-      children: [
-        new TextRun({
-          text: `총 ${report.articles.length}건의 기사 분석`,
-          size: 22,
-          font: "맑은 고딕",
-          color: "999999",
-        }),
-      ],
-    }),
   ];
+
+  if (report.articles.length > 0) {
+    paragraphs.push(
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        children: [
+          new TextRun({
+            text: `총 ${report.articles.length}건의 기사 분석`,
+            size: 22,
+            font: "맑은 고딕",
+            color: "999999",
+          }),
+        ],
+      }),
+    );
+  }
+
+  return paragraphs;
 }
 
 function createExecutiveSummary(bullets: string[]): Paragraph[] {
@@ -121,17 +128,19 @@ function createExecutiveSummary(bullets: string[]): Paragraph[] {
   return paragraphs;
 }
 
-function createArticleSection(report: ClipperReport): Paragraph[] {
+function createArticleSection(report: ClipperReport, leadingPageBreak = true): Paragraph[] {
   const paragraphs: Paragraph[] = [];
   const importanceLabel = "중요도";
 
   for (let i = 0; i < report.articles.length; i++) {
     const article = report.articles[i];
 
-    // 기사 시작 전 항상 페이지 나눔
-    paragraphs.push(
-      new Paragraph({ children: [new PageBreak()] }),
-    );
+    // 기사 시작 전 페이지 나눔 (단일 기사 문서의 첫 기사는 제외)
+    if (i > 0 || leadingPageBreak) {
+      paragraphs.push(
+        new Paragraph({ children: [new PageBreak()] }),
+      );
+    }
 
     // 기사 번호 및 제목
     paragraphs.push(
@@ -246,10 +255,8 @@ function createArticleSection(report: ClipperReport): Paragraph[] {
   return paragraphs;
 }
 
-export async function generateDocx(report: ClipperReport): Promise<string> {
-  console.log("📄 DOCX 파일 생성 중...");
-
-  const doc = new Document({
+function buildDocument(children: Paragraph[]): Document {
+  return new Document({
     styles: {
       default: {
         document: {
@@ -272,18 +279,40 @@ export async function generateDocx(report: ClipperReport): Promise<string> {
             },
           },
         },
-        children: [
-          ...createTitlePage(report),
-          ...createExecutiveSummary(report.executiveSummary),
-          ...createArticleSection(report),
-        ],
+        children,
       },
     ],
   });
+}
 
-  const buffer = await Packer.toBuffer(doc);
+export async function generateDocxBuffer(report: ClipperReport): Promise<Buffer> {
+  const doc = buildDocument([
+    ...createTitlePage(report),
+    ...createExecutiveSummary(report.executiveSummary),
+    ...createArticleSection(report),
+  ]);
+  return Packer.toBuffer(doc);
+}
+
+export async function generateDocx(report: ClipperReport): Promise<string> {
+  console.log("📄 DOCX 파일 생성 중...");
+
+  const buffer = await generateDocxBuffer(report);
   fs.writeFileSync(report.config.outputPath, buffer);
 
   console.log(`   ✅ 파일 저장 완료: ${report.config.outputPath}\n`);
   return report.config.outputPath;
+}
+
+/** 단일 기사만 담은 DOCX 버퍼 생성 (기사별 개별 파일용) */
+export async function generateSingleArticleDocx(article: RankedArticle, keyword: string): Promise<Buffer> {
+  const report: ClipperReport = {
+    config: { keyword, days: 0, outputPath: "", claudeModel: "", port: 0 },
+    executiveSummary: [],
+    articles: [article],
+    generatedAt: new Date().toISOString(),
+    analysisPrompt: "",
+  };
+  const doc = buildDocument(createArticleSection(report, false));
+  return Packer.toBuffer(doc);
 }

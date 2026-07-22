@@ -8,7 +8,7 @@ import { scrapeNaverNews, type SearchMethod } from "./scraper.js";
 import { extractAllArticles } from "./extractor.js";
 import { rankByImportance, generateExecutiveSummary, filterDuplicates } from "./analyzer.js";
 import JSZip from "jszip";
-import { generateDocx } from "./docxGenerator.js";
+import { generateDocx, generateDocxBuffer, generateSingleArticleDocx } from "./docxGenerator.js";
 import { logger } from "./logger.js";
 import { isSetupComplete } from "./config.js";
 import type {
@@ -1191,10 +1191,10 @@ function buildPageHtml(): string {
               <input type="checkbox" id="optSummary" checked style="width:16px;height:16px;accent-color:var(--c-primary);" /> Executive Summary
             </label>
             <label style="display:flex;align-items:center;gap:6px;font-weight:400;cursor:pointer;">
-              <input type="checkbox" id="optSeparate" style="width:16px;height:16px;accent-color:var(--c-primary);" /> 키워드별 개별 파일 (ZIP)
+              <input type="checkbox" id="optSeparate" style="width:16px;height:16px;accent-color:var(--c-primary);" /> 기사별 개별 파일 (ZIP)
             </label>
           </div>
-          <div class="hint">AI(LLM)를 사용하는 단계입니다. 체크를 해제하면 해당 단계를 건너뛰어 처리 속도가 빨라집니다.<br/>'키워드별 개별 파일'을 체크하면 키워드마다 별도 DOCX를 만들어 ZIP으로 묶어줍니다.</div>
+          <div class="hint">AI(LLM)를 사용하는 단계입니다. 체크를 해제하면 해당 단계를 건너뛰어 처리 속도가 빨라집니다.<br/>'기사별 개별 파일'을 체크하면 기사 하나마다 별도 DOCX를 만들어 ZIP으로 묶어줍니다. (키워드가 여러 개면 폴더로 구분)</div>
         </div>
         <div id="emailToggleArea"></div>
         <button type="submit" class="btn btn-primary" id="searchBtn">검색 시작</button>
@@ -2703,25 +2703,41 @@ async function runPipeline(
           summaryByKw.push(await makeSummary(rankedByKw[k], kwEntries[k].label));
         }
 
-        // Step 4: 키워드별 DOCX + ZIP
-        sessionProgress(session, 4, totalSteps, `DOCX 리포트 생성 중... (${kwEntries.length}개 파일 + ZIP)`);
+        // Step 4: 기사별 DOCX + ZIP
+        const totalFiles = rankedByKw.reduce((s, r) => s + r.length, 0);
+        sessionProgress(session, 4, totalSteps, `기사별 DOCX 생성 중... (${totalFiles}건 + ZIP)`);
+
+        const zip = new JSZip();
+        const multiKw = kwEntries.length > 1;
+        let fileCount = 0;
+
         for (let k = 0; k < kwEntries.length; k++) {
-          broadcastDetailProgress(4, "DOCX 파일 생성", k + 1, kwEntries.length + 1, kwEntries[k].label);
-          const fname = `뉴스클리핑_${sanitizeFilename(kwEntries[k].label)}_${dateStr}.docx`;
-          const fpath = path.join(outputDir, fname);
-          await generateDocx(buildReport(kwEntries[k].label, rankedByKw[k], summaryByKw[k], fpath));
-          generatedFiles.push(fpath);
+          // 키워드가 여러 개면 키워드별 폴더로 구분
+          const folder = multiKw ? zip.folder(sanitizeFilename(kwEntries[k].label))! : zip;
+
+          // 키워드별 Executive Summary 문서
+          if (summaryByKw[k].length > 0) {
+            const sumBuf = await generateDocxBuffer(buildReport(kwEntries[k].label, [], summaryByKw[k], ""));
+            folder.file("00_Executive_Summary.docx", sumBuf);
+          }
+
+          // 기사마다 개별 DOCX (중요도 순 번호)
+          for (let i = 0; i < rankedByKw[k].length; i++) {
+            fileCount++;
+            const art = rankedByKw[k][i];
+            broadcastDetailProgress(4, "기사별 DOCX 생성", fileCount, totalFiles + 1, art.title);
+            const buf = await generateSingleArticleDocx(art, kwEntries[k].label);
+            const titlePart = sanitizeFilename(art.title).slice(0, 50).trim() || "기사";
+            folder.file(`${String(i + 1).padStart(3, "0")}_${titlePart}.docx`, buf);
+          }
         }
 
-        broadcastDetailProgress(4, "ZIP 압축", kwEntries.length + 1, kwEntries.length + 1, "압축 중...");
+        broadcastDetailProgress(4, "ZIP 압축", totalFiles + 1, totalFiles + 1, "압축 중...");
         const zipName = `뉴스클리핑_${sanitizeFilename(keywords[0])}${keywords.length > 1 ? `_외${keywords.length - 1}건` : ""}_${dateStr}.zip`;
         outputPath = path.join(outputDir, zipName);
-        const zip = new JSZip();
-        for (const f of generatedFiles) {
-          zip.file(path.basename(f), fs.readFileSync(f));
-        }
         fs.writeFileSync(outputPath, await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" }));
-        sessionLog(session, "info", `키워드별 리포트 ${generatedFiles.length}개 생성 → ${zipName}`);
+        generatedFiles.push(outputPath);
+        sessionLog(session, "info", `기사별 DOCX ${totalFiles}개 생성 → ${zipName}`);
       } else {
         // ── 통합 리포트 (기존 동작) ──
         // Step 2: Rank by importance (옵션)
