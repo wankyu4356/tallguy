@@ -325,7 +325,15 @@ async function searchViaScraping(keyword: string, days: number): Promise<SearchA
   const endDate = new Date();
   const startDate = new Date();
   startDate.setDate(startDate.getDate() - days);
+  return searchViaScrapingRange(keyword, startDate, endDate, days);
+}
 
+async function searchViaScrapingRange(
+  keyword: string,
+  startDate: Date,
+  endDate: Date,
+  days: number,
+): Promise<SearchArticle[]> {
   logger.info(`[웹 스크래핑] 네이버 뉴스 검색: "${keyword}" (최근 ${days}일)`);
   logger.info(`검색 기간: ${formatDate(startDate).dot} ~ ${formatDate(endDate).dot}`);
 
@@ -487,7 +495,9 @@ async function searchViaNaverApi(keyword: string, days: number): Promise<SearchA
   const seenLinks = new Set<string>();
   const displaySize = 100;
   let start = 1;
-  const maxStart = 1000;
+  const maxStart = 1000; // 네이버 API 하드 리밋 (start 최대 1000 → 총 ~1,100건)
+  let oldestDate = endDate;
+  let reachedApiCap = false;
 
   logger.info(`[네이버 API] 뉴스 검색: "${keyword}" (최근 ${days}일)`);
   logger.info(`검색 기간: ${formatDate(startDate).dot} ~ ${formatDate(endDate).dot}`);
@@ -542,6 +552,7 @@ async function searchViaNaverApi(keyword: string, days: number): Promise<SearchA
           summary: stripHtml(item.description),
         });
 
+        if (pubDate < oldestDate) oldestDate = pubDate;
         newCount++;
       }
 
@@ -549,7 +560,13 @@ async function searchViaNaverApi(keyword: string, days: number): Promise<SearchA
 
       if (hasOldArticle || newCount === 0) break;
 
-      start += displaySize;
+      if (start === maxStart) {
+        // API 페이지네이션 한도 도달 — 기간 내 기사가 더 남아있음
+        reachedApiCap = true;
+        break;
+      }
+      // 마지막 페이지는 start=1000으로 클램프해 900~1099 구간까지 수집
+      start = Math.min(start + displaySize, maxStart);
       await sleep(DELAY_MS);
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : String(error);
@@ -561,6 +578,35 @@ async function searchViaNaverApi(keyword: string, days: number): Promise<SearchA
         logger.error(`네이버 API 요청 실패: ${errMsg}`, error);
       }
       break;
+    }
+  }
+
+  // API 페이지네이션 한도(~1,100건)에 걸려 기간 내 기사가 잘린 경우
+  // 수집된 가장 오래된 날짜 이전 구간을 웹 스크래핑으로 보완
+  if (reachedApiCap && oldestDate > startDate) {
+    logger.warn(
+      `[네이버 API] 결과가 API 한도(약 1,100건)에서 잘렸습니다. ` +
+      `${formatDate(startDate).dot} ~ ${formatDate(oldestDate).dot} 구간을 웹 스크래핑으로 보완합니다...`,
+    );
+    try {
+      const remainderDays = Math.max(1, Math.ceil((oldestDate.getTime() - startDate.getTime()) / 86400000));
+      const extra = await searchViaScrapingRange(keyword, startDate, oldestDate, remainderDays);
+      let added = 0;
+      for (const a of extra) {
+        const key = a.naverLink || a.originalLink;
+        if (key && !seenLinks.has(key)) {
+          seenLinks.add(key);
+          allArticles.push(a);
+          added++;
+        }
+      }
+      if (added > 0) {
+        logger.info(`[스크래핑 보완] ${added}건 추가 수집`);
+      } else {
+        logger.warn("[스크래핑 보완] 추가 기사를 찾지 못했습니다. 기간을 좁혀 나눠 검색하면 전체를 수집할 수 있습니다.");
+      }
+    } catch {
+      logger.warn("[스크래핑 보완] 실패 — API 수집분만 사용합니다.");
     }
   }
 

@@ -7,6 +7,7 @@ import nodemailer from "nodemailer";
 import { scrapeNaverNews, type SearchMethod } from "./scraper.js";
 import { extractAllArticles } from "./extractor.js";
 import { rankByImportance, generateExecutiveSummary, filterDuplicates } from "./analyzer.js";
+import JSZip from "jszip";
 import { generateDocx } from "./docxGenerator.js";
 import { logger } from "./logger.js";
 import { isSetupComplete } from "./config.js";
@@ -35,6 +36,8 @@ interface SessionData {
   useRanking?: boolean;
   useSummary?: boolean;
   useDedup?: boolean;
+  separateFiles?: boolean;
+  selectedByKeywordArticles?: Record<string, SearchArticle[]>;
 }
 
 const sessions = new Map<string, SessionData>();
@@ -1187,8 +1190,11 @@ function buildPageHtml(): string {
             <label style="display:flex;align-items:center;gap:6px;font-weight:400;cursor:pointer;">
               <input type="checkbox" id="optSummary" checked style="width:16px;height:16px;accent-color:var(--c-primary);" /> Executive Summary
             </label>
+            <label style="display:flex;align-items:center;gap:6px;font-weight:400;cursor:pointer;">
+              <input type="checkbox" id="optSeparate" style="width:16px;height:16px;accent-color:var(--c-primary);" /> 키워드별 개별 파일 (ZIP)
+            </label>
           </div>
-          <div class="hint">AI(LLM)를 사용하는 단계입니다. 체크를 해제하면 해당 단계를 건너뛰어 처리 속도가 빨라집니다.</div>
+          <div class="hint">AI(LLM)를 사용하는 단계입니다. 체크를 해제하면 해당 단계를 건너뛰어 처리 속도가 빨라집니다.<br/>'키워드별 개별 파일'을 체크하면 키워드마다 별도 DOCX를 만들어 ZIP으로 묶어줍니다.</div>
         </div>
         <div id="emailToggleArea"></div>
         <button type="submit" class="btn btn-primary" id="searchBtn">검색 시작</button>
@@ -1259,8 +1265,9 @@ function buildPageHtml(): string {
         </div>
         <div class="complete-msg">리포트가 준비되었습니다</div>
         <div class="complete-sub" id="completeDetail"></div>
+        <div id="completeFileList" style="margin:14px auto 0;max-width:480px;text-align:left;"></div>
         <div class="complete-actions">
-          <a class="btn btn-primary" id="downloadBtn" href="#">DOCX 다운로드</a>
+          <a class="btn btn-primary" id="downloadBtn" href="#">다운로드</a>
           <button type="button" class="btn btn-secondary" onclick="resetApp()">새로운 검색</button>
         </div>
       </div>
@@ -1760,7 +1767,8 @@ function buildPageHtml(): string {
             selectedByKeyword: selectedByKeyword,
             useDedup: document.getElementById('optDedup').checked,
             useRanking: document.getElementById('optRanking').checked,
-            useSummary: document.getElementById('optSummary').checked
+            useSummary: document.getElementById('optSummary').checked,
+            separateFiles: document.getElementById('optSeparate').checked
           })
         });
         var data = await res.json();
@@ -1846,7 +1854,7 @@ function buildPageHtml(): string {
           document.getElementById('progressPercent').textContent = '100%';
           document.getElementById('stepLabel').textContent = '완료!';
           document.getElementById('detailProgress').style.display = 'none';
-          showComplete(data.filename, data.emailSent);
+          showComplete(data.filename, data.emailSent, data.files);
         }
 
         if (data.type === 'error') {
@@ -1902,11 +1910,26 @@ function buildPageHtml(): string {
     // -----------------------------------------------------------------------
     // Section 4: Complete
     // -----------------------------------------------------------------------
-    function showComplete(filename, emailSent) {
+    function showComplete(filename, emailSent, files) {
       var detail = filename;
       if (emailSent) detail += ' (메일 발송 완료)';
       document.getElementById('completeDetail').textContent = detail;
-      document.getElementById('downloadBtn').href = '/api/download/' + encodeURIComponent(filename);
+      var dlBtn = document.getElementById('downloadBtn');
+      dlBtn.href = '/api/download/' + encodeURIComponent(filename);
+      dlBtn.textContent = /\\.zip$/i.test(filename) ? 'ZIP 전체 다운로드' : 'DOCX 다운로드';
+
+      // 개별 파일 목록 (ZIP 모드일 때 각각 다운로드 가능)
+      var listEl = document.getElementById('completeFileList');
+      listEl.innerHTML = '';
+      if (files && files.length > 1) {
+        var html = '<div style="font-size:12px;font-weight:700;color:var(--c-text-secondary);margin-bottom:6px;">개별 파일 다운로드</div>';
+        files.forEach(function(f) {
+          html += '<a href="/api/download/' + encodeURIComponent(f) + '" ' +
+            'style="display:block;padding:8px 12px;margin-bottom:4px;background:var(--c-bg);border:1px solid var(--c-border);border-radius:8px;font-size:13px;color:var(--c-primary);text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
+            '&#x1F4C4; ' + escapeHtml(f) + '</a>';
+        });
+        listEl.innerHTML = html;
+      }
       showSection('sectionComplete');
     }
 
@@ -2322,12 +2345,13 @@ export function createApp(claudeModel: string): { app: express.Express } {
   // -------------------------------------------------------------------------
   app.post("/api/process", (req, res) => {
     try {
-      const { sessionId, selectedByKeyword, useRanking, useSummary, useDedup } = req.body as {
+      const { sessionId, selectedByKeyword, useRanking, useSummary, useDedup, separateFiles } = req.body as {
         sessionId: unknown;
         selectedByKeyword: unknown;
         useRanking?: unknown;
         useSummary?: unknown;
         useDedup?: unknown;
+        separateFiles?: unknown;
       };
 
       if (typeof sessionId !== "string" || !sessions.has(sessionId)) {
@@ -2349,6 +2373,7 @@ export function createApp(claudeModel: string): { app: express.Express } {
 
       // 키워드별 선택된 기사 수집
       const selected: SearchArticle[] = [];
+      const selectedByKw: Record<string, SearchArticle[]> = {};
       const selMap = selectedByKeyword as Record<string, number[]>;
 
       for (const [kw, indices] of Object.entries(selMap)) {
@@ -2356,8 +2381,9 @@ export function createApp(claudeModel: string): { app: express.Express } {
         if (!kwArticles) continue;
         for (const idx of indices) {
           if (typeof idx === "number" && idx >= 0 && idx < kwArticles.length) {
-            // 중복 방지 (같은 기사가 여러 키워드에 있을 수 있음)
             const article = kwArticles[idx];
+            (selectedByKw[kw] = selectedByKw[kw] || []).push(article);
+            // 중복 방지 (같은 기사가 여러 키워드에 있을 수 있음)
             const key = article.naverLink || article.originalLink;
             if (!selected.some(a => (a.naverLink || a.originalLink) === key)) {
               selected.push(article);
@@ -2372,9 +2398,11 @@ export function createApp(claudeModel: string): { app: express.Express } {
       }
 
       session.selectedArticles = selected;
+      session.selectedByKeywordArticles = selectedByKw;
       session.useRanking = useRanking !== false;
       session.useSummary = useSummary !== false;
       session.useDedup = useDedup !== false;
+      session.separateFiles = separateFiles === true;
       session.status = "processing";
 
       // Return immediately
@@ -2591,84 +2619,142 @@ async function runPipeline(
         },
       );
 
-      // Step 2: Rank by importance (옵션)
-      let rankedArticles: RankedArticle[];
-      if (session.useRanking !== false) {
-        const analysisLabel = session.analysisPrompt ? "기사 분석·정렬" : "중요도 분석";
-        sessionProgress(
-          session,
-          2,
-          totalSteps,
-          `${analysisLabel} 중...`,
-        );
-        rankedArticles = await rankByImportance(
-          articleDetails,
-          claude,
-          claudeModel,
-          session.analysisPrompt,
-          (current, total, itemName) => {
-            broadcastDetailProgress(2, analysisLabel, current, total, itemName);
-          },
-        );
-      } else {
-        sessionLog(session, "info", "중요도 정렬 단계 건너뜀 (옵션 해제)");
-        broadcastDetailProgress(2, "중요도 분석 건너뜀", 1, 1, "");
-        rankedArticles = articleDetails.map((a) => ({
-          ...a,
-          importance: 0,
-          importanceReason: "",
-        }));
-      }
+      const analysisLabel = session.analysisPrompt ? "기사 분석·정렬" : "중요도 분석";
 
-      // Step 3: Generate executive summary (옵션)
-      let executiveSummary: string[] = [];
-      if (session.useSummary !== false) {
-        sessionProgress(
-          session,
-          3,
-          totalSteps,
-          "Executive Summary 생성 중...",
-        );
-        broadcastDetailProgress(3, "Executive Summary 생성", 1, 1, "AI 분석 중...");
-        executiveSummary = await generateExecutiveSummary(
-          rankedArticles,
-          keywordStr,
-          claude,
-          claudeModel,
-          session.analysisPrompt,
-        );
-      } else {
-        sessionLog(session, "info", "Executive Summary 단계 건너뜀 (옵션 해제)");
-        broadcastDetailProgress(3, "Executive Summary 건너뜀", 1, 1, "");
-      }
+      const makeRanked = async (
+        details: typeof articleDetails,
+        onProgress: (current: number, total: number, itemName: string) => void,
+      ): Promise<RankedArticle[]> => {
+        if (session.useRanking !== false) {
+          return rankByImportance(details, claude, claudeModel, session.analysisPrompt, onProgress);
+        }
+        return details.map((a) => ({ ...a, importance: 0, importanceReason: "" }));
+      };
 
-      // Step 4: Generate DOCX
-      sessionProgress(session, 4, totalSteps, "DOCX 리포트 생성 중...");
-      broadcastDetailProgress(4, "DOCX 파일 생성", 1, 1, "리포트 조립 중...");
+      const makeSummary = async (ranked: RankedArticle[], label: string): Promise<string[]> => {
+        if (session.useSummary !== false) {
+          return generateExecutiveSummary(ranked, label, claude, claudeModel, session.analysisPrompt);
+        }
+        return [];
+      };
 
       const outputDir = ensureOutputDir();
       const dateStr = getDateStr();
-      const filenameKeyword = keywords[0] + (keywords.length > 1 ? `_외${keywords.length - 1}건` : "");
-      const outputFilename = `뉴스클리핑_${filenameKeyword}_${dateStr}.docx`;
-      const outputPath = path.join(outputDir, outputFilename);
+      const sanitizeFilename = (s: string) => s.replace(/[\\/:*?"<>|]/g, "_").slice(0, 60);
 
-      const config: ClipperConfig = {
-        keyword: keywordStr,
-        days: session.days,
-        outputPath,
-        claudeModel,
-        port: 0,
-      };
-
-      const report: ClipperReport = {
-        config,
-        executiveSummary,
-        articles: rankedArticles,
+      const buildReport = (label: string, ranked: RankedArticle[], summary: string[], filePath: string): ClipperReport => ({
+        config: {
+          keyword: label,
+          days: session.days,
+          outputPath: filePath,
+          claudeModel,
+          port: 0,
+        } as ClipperConfig,
+        executiveSummary: summary,
+        articles: ranked,
         generatedAt: new Date().toISOString(),
         analysisPrompt: session.analysisPrompt || "",
-      };
+      });
 
-      await generateDocx(report);
+      let outputPath: string;
+      let generatedFiles: string[] = [];
+
+      if (session.separateFiles && session.selectedByKeywordArticles) {
+        // ── 키워드별 개별 리포트 생성 → ZIP ──
+        const detailByLink = new Map<string, (typeof articleDetails)[number]>();
+        selectedArticles.forEach((a, i) => {
+          const key = a.naverLink || a.originalLink;
+          if (key && articleDetails[i]) detailByLink.set(key, articleDetails[i]);
+        });
+
+        const kwEntries = Object.entries(session.selectedByKeywordArticles)
+          .map(([label, arts]) => ({
+            label,
+            details: arts
+              .map((a) => detailByLink.get(a.naverLink || a.originalLink))
+              .filter((d): d is (typeof articleDetails)[number] => !!d),
+          }))
+          .filter((e) => e.details.length > 0);
+
+        // Step 2: 키워드별 랭킹
+        if (session.useRanking !== false) {
+          sessionProgress(session, 2, totalSteps, `${analysisLabel} 중... (키워드 ${kwEntries.length}개)`);
+        } else {
+          sessionLog(session, "info", "중요도 정렬 단계 건너뜀 (옵션 해제)");
+        }
+        const rankedByKw: RankedArticle[][] = [];
+        for (let k = 0; k < kwEntries.length; k++) {
+          rankedByKw.push(
+            await makeRanked(kwEntries[k].details, (_c, _t, itemName) => {
+              broadcastDetailProgress(2, analysisLabel, k + 1, kwEntries.length, `[${kwEntries[k].label}] ${itemName}`);
+            }),
+          );
+        }
+
+        // Step 3: 키워드별 Executive Summary
+        if (session.useSummary !== false) {
+          sessionProgress(session, 3, totalSteps, `Executive Summary 생성 중... (키워드 ${kwEntries.length}개)`);
+        } else {
+          sessionLog(session, "info", "Executive Summary 단계 건너뜀 (옵션 해제)");
+        }
+        const summaryByKw: string[][] = [];
+        for (let k = 0; k < kwEntries.length; k++) {
+          broadcastDetailProgress(3, "Executive Summary 생성", k + 1, kwEntries.length, kwEntries[k].label);
+          summaryByKw.push(await makeSummary(rankedByKw[k], kwEntries[k].label));
+        }
+
+        // Step 4: 키워드별 DOCX + ZIP
+        sessionProgress(session, 4, totalSteps, `DOCX 리포트 생성 중... (${kwEntries.length}개 파일 + ZIP)`);
+        for (let k = 0; k < kwEntries.length; k++) {
+          broadcastDetailProgress(4, "DOCX 파일 생성", k + 1, kwEntries.length + 1, kwEntries[k].label);
+          const fname = `뉴스클리핑_${sanitizeFilename(kwEntries[k].label)}_${dateStr}.docx`;
+          const fpath = path.join(outputDir, fname);
+          await generateDocx(buildReport(kwEntries[k].label, rankedByKw[k], summaryByKw[k], fpath));
+          generatedFiles.push(fpath);
+        }
+
+        broadcastDetailProgress(4, "ZIP 압축", kwEntries.length + 1, kwEntries.length + 1, "압축 중...");
+        const zipName = `뉴스클리핑_${sanitizeFilename(keywords[0])}${keywords.length > 1 ? `_외${keywords.length - 1}건` : ""}_${dateStr}.zip`;
+        outputPath = path.join(outputDir, zipName);
+        const zip = new JSZip();
+        for (const f of generatedFiles) {
+          zip.file(path.basename(f), fs.readFileSync(f));
+        }
+        fs.writeFileSync(outputPath, await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" }));
+        sessionLog(session, "info", `키워드별 리포트 ${generatedFiles.length}개 생성 → ${zipName}`);
+      } else {
+        // ── 통합 리포트 (기존 동작) ──
+        // Step 2: Rank by importance (옵션)
+        if (session.useRanking !== false) {
+          sessionProgress(session, 2, totalSteps, `${analysisLabel} 중...`);
+        } else {
+          sessionLog(session, "info", "중요도 정렬 단계 건너뜀 (옵션 해제)");
+          broadcastDetailProgress(2, "중요도 분석 건너뜀", 1, 1, "");
+        }
+        const rankedArticles = await makeRanked(articleDetails, (current, total, itemName) => {
+          broadcastDetailProgress(2, analysisLabel, current, total, itemName);
+        });
+
+        // Step 3: Generate executive summary (옵션)
+        if (session.useSummary !== false) {
+          sessionProgress(session, 3, totalSteps, "Executive Summary 생성 중...");
+          broadcastDetailProgress(3, "Executive Summary 생성", 1, 1, "AI 분석 중...");
+        } else {
+          sessionLog(session, "info", "Executive Summary 단계 건너뜀 (옵션 해제)");
+          broadcastDetailProgress(3, "Executive Summary 건너뜀", 1, 1, "");
+        }
+        const executiveSummary = await makeSummary(rankedArticles, keywordStr);
+
+        // Step 4: Generate DOCX
+        sessionProgress(session, 4, totalSteps, "DOCX 리포트 생성 중...");
+        broadcastDetailProgress(4, "DOCX 파일 생성", 1, 1, "리포트 조립 중...");
+
+        const filenameKeyword = keywords[0] + (keywords.length > 1 ? `_외${keywords.length - 1}건` : "");
+        const outputFilename = `뉴스클리핑_${sanitizeFilename(filenameKeyword)}_${dateStr}.docx`;
+        outputPath = path.join(outputDir, outputFilename);
+        await generateDocx(buildReport(keywordStr, rankedArticles, executiveSummary, outputPath));
+        generatedFiles.push(outputPath);
+      }
 
       // Step 5: Email (optional)
       let emailSent = false;
@@ -2688,8 +2774,14 @@ async function runPipeline(
       session.status = "done";
       session.outputPath = outputPath;
 
+      const outputFilename = path.basename(outputPath);
       sessionLog(session, "info", `리포트 생성 완료: ${outputFilename}`);
-      broadcastSSE(session, { type: "done", filename: outputFilename, emailSent });
+      broadcastSSE(session, {
+        type: "done",
+        filename: outputFilename,
+        files: generatedFiles.map((f) => path.basename(f)),
+        emailSent,
+      });
     } finally {
       unsubscribe();
     }
